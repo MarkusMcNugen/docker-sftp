@@ -2,8 +2,6 @@
 
 ![Docker Automated build](https://img.shields.io/docker/automated/atmoz/sftp.svg) ![Docker Build Status](https://img.shields.io/docker/build/atmoz/sftp.svg) ![Docker Stars](https://img.shields.io/docker/stars/atmoz/sftp.svg) ![Docker Pulls](https://img.shields.io/docker/pulls/atmoz/sftp.svg)
 
-![OpenSSH logo](https://raw.githubusercontent.com/atmoz/sftp/master/openssh.png "Powered by OpenSSH")
-
 # Supported tags and respective `Dockerfile` links
 
 - [`debian-stretch`, `debian`, `latest` (*Dockerfile*)](https://github.com/atmoz/sftp/blob/master/Dockerfile) [![](https://images.microbadger.com/badges/image/atmoz/sftp.svg)](http://microbadger.com/images/atmoz/sftp "Get your own image badge on microbadger.com")
