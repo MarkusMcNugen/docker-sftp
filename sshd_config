@@ -20,4 +20,4 @@ ChrootDirectory %h
 
 # Logging
 SyslogFacility AUTH
-LogLevel INFO
+LogLevel VERBOSE
