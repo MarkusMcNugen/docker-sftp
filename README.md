@@ -1,13 +1,10 @@
 # SFTP
+Easy to use SFTP ([SSH File Transfer Protocol](https://en.wikipedia.org/wiki/SSH_File_Transfer_Protocol)) server with [OpenSSH](https://en.wikipedia.org/wiki/OpenSSH).
+This is an automated build linked with the [Ubuntu](https://hub.docker.com/_/ubuntu/) with Fail2ban installed.
 
 # Supported tags and respective `Dockerfile` links
 
 - [`xenial`, `latest` (*Dockerfile*)](https://github.com/markusmcnugen/docker-sftp/blob/master/Dockerfile)
-
-# Securely share your files
-
-Easy to use SFTP ([SSH File Transfer Protocol](https://en.wikipedia.org/wiki/SSH_File_Transfer_Protocol)) server with [OpenSSH](https://en.wikipedia.org/wiki/OpenSSH).
-This is an automated build linked with the [Ubuntu](https://hub.docker.com/_/ubuntu/) with Fail2ban installed.
 
 # Usage
 
