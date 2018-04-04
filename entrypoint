@@ -186,7 +186,6 @@ sed -i 's/^port     = ssh/port     = 22/' /etc/fail2ban/jail.conf
 
 if $startSshd; then
     log "Executing sshd"
-    service rsyslog start
     service fail2ban start
     exec /usr/sbin/sshd -D -e
 else
