@@ -18,3 +18,5 @@ RUN chmod +x /entrypoint
 EXPOSE 22
 
 ENTRYPOINT ["/entrypoint"]
+
+CMD ["exec", "/bin/bash"]
