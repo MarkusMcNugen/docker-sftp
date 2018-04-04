@@ -19,4 +19,8 @@ EXPOSE 22
 
 ENTRYPOINT ["/entrypoint"]
 
-CMD ["/bin/bash"]
+# Define working directory.
+WORKDIR /root
+
+# Define default command.
+CMD ["bash"]
