@@ -185,7 +185,7 @@ sed -i 's/^backend = auto/backend = systemd/' /etc/fail2ban/jail.conf
 sed -i 's/^port     = ssh/port     = 22/' /etc/fail2ban/jail.conf
 
 if $startSshd; then
-    service syslogng start
+    service syslog-ng start
     log "Executing sshd"
     service ssh start
     log "Executing fail2ban"
