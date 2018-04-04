@@ -1,5 +1,5 @@
 # SFTP
-Easy to use SFTP ([SSH File Transfer Protocol](https://en.wikipedia.org/wiki/SSH_File_Transfer_Protocol)) server with [OpenSSH](https://en.wikipedia.org/wiki/OpenSSH) and Fail2ban installed.
+Easy to use SFTP ([SSH File Transfer Protocol](https://en.wikipedia.org/wiki/SSH_File_Transfer_Protocol)) server with [OpenSSH](https://en.wikipedia.org/wiki/OpenSSH) and Fail2ban installed. Serves as a drop in replacement for atmoz/sftp. 
 This is an automated build linked with the [Ubuntu](https://hub.docker.com/_/ubuntu/).
 
 # Supported tags and respective `Dockerfile` links
