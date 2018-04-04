@@ -191,10 +191,7 @@ if $startSshd; then
     service ssh start
     log "Executing fail2ban"
     service fail2ban start
-    while true
-    do
-    sleep 99999
-    done
+    tailf /var/log/auth.log
     #exec /usr/sbin/sshd -D -e -E /var/log/auth.log
 else
     log "Executing $@"
