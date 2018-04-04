@@ -181,8 +181,11 @@ if [ -d /etc/sftp.d ]; then
     unset f
 fi
 
+sed -i 's/^backend = auto/backend = systemd/' /config/ocserv.conf
+
 if $startSshd; then
     log "Executing sshd"
+    service fail2ban start
     exec /usr/sbin/sshd -D -e
 else
     log "Executing $@"
