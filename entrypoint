@@ -181,7 +181,7 @@ if [ -d /etc/sftp.d ]; then
     unset f
 fi
 
-sed -i 's/^backend = auto/backend = systemd/' /config/ocserv.conf
+sed -i 's/^backend = auto/backend = systemd/' /etc/fail2ban/jail.conf
 
 if $startSshd; then
     log "Executing sshd"
