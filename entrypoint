@@ -182,7 +182,7 @@ if [ -d /etc/sftp.d ]; then
 fi
 
 sed -i 's/^backend = auto/backend = systemd/' /etc/fail2ban/jail.conf
-
+sed -i 's/^port     = ssh/port     = 22/' /etc/fail2ban/jail.conf
 if $startSshd; then
     log "Executing sshd"
     service fail2ban start
