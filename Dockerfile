@@ -13,7 +13,7 @@ RUN apt-get update && \
 
 COPY sshd_config /etc/ssh/sshd_config
 COPY entrypoint /
-chmod +x /entrypoint
+RUN chmod +x /entrypoint
 
 EXPOSE 22
 
