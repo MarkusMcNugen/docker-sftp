@@ -190,6 +190,7 @@ if $startSshd; then
     service ssh start
     log "Executing fail2ban"
     service fail2ban start
+    sleep 99999
     #exec /usr/sbin/sshd -D -e -E /var/log/auth.log
 else
     log "Executing $@"
