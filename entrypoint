@@ -181,8 +181,9 @@ if [ -d /etc/sftp.d ]; then
     unset f
 fi
 
-sed -i 's/^backend = auto/backend = systemd/' /etc/fail2ban/jail.conf
+#sed -i 's/^backend = auto/backend = systemd/' /etc/fail2ban/jail.conf
 sed -i 's/^port     = ssh/port     = 22/' /etc/fail2ban/jail.conf
+sed -i 's/^port    = ssh/port     = 22/' /etc/fail2ban/jail.conf
 
 if $startSshd; then
     service syslog-ng start
@@ -190,7 +191,10 @@ if $startSshd; then
     service ssh start
     log "Executing fail2ban"
     service fail2ban start
+    while true
+    do
     sleep 99999
+    done
     #exec /usr/sbin/sshd -D -e -E /var/log/auth.log
 else
     log "Executing $@"
