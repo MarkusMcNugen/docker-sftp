@@ -12,9 +12,9 @@ RUN apt-get update && \
     rm -f /etc/ssh/ssh_host_*key*
 
 COPY sshd_config /etc/ssh/sshd_config
-COPY entrypoint /entrypoint.sh
-chmod +x /entrypoint.sh
+COPY entrypoint /
+chmod +x /entrypoint
 
 EXPOSE 22
 
-ENTRYPOINT ["/entrypoint.sh"]
+ENTRYPOINT ["/entrypoint"]
