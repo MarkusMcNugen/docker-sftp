@@ -1,4 +1,4 @@
-FROM ubuntu:16.04
+FROM ubuntu:xenial
 MAINTAINER MarkusMcNugen
 
 # Steps done in one RUN layer:
