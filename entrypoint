@@ -192,7 +192,6 @@ if $startSshd; then
     log "Executing fail2ban"
     service fail2ban start
     tailf /var/log/auth.log
-    #exec /usr/sbin/sshd -D -e -E /var/log/auth.log
 else
     log "Executing $@"
     exec "$@"
