@@ -18,9 +18,3 @@ RUN chmod +x /entrypoint
 EXPOSE 22
 
 ENTRYPOINT ["/entrypoint"]
-
-# Define working directory.
-WORKDIR /root
-
-# Define default command.
-CMD ["bash"]
