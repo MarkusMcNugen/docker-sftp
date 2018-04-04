@@ -1,5 +1,5 @@
-FROM debian:stretch
-MAINTAINER Adrian Dvergsdal [atmoz.net]
+FROM ubuntu:xenial
+MAINTAINER MarkusMcNugen
 
 # Steps done in one RUN layer:
 # - Install packages
