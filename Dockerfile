@@ -19,4 +19,4 @@ EXPOSE 22
 
 ENTRYPOINT ["/entrypoint"]
 
-CMD ["exec", "/bin/bash"]
+CMD ["/bin/bash"]
