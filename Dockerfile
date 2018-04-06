@@ -17,8 +17,6 @@ RUN apt-get update && \
 
 COPY entrypoint /
 RUN chmod +x /entrypoint && \
-    mkdir -p /config/fail2ban && \
-    mkdir -p /config/sshd && \
     mkdir -p /etc/default/sshd && \
     mkdir -p /etc/default/f2ban
 
