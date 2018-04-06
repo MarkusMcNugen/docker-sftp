@@ -16,7 +16,11 @@ RUN apt-get update && \
     rm -f /etc/ssh/ssh_host_*key*
 
 COPY entrypoint /
-RUN chmod +x /entrypoint
+RUN chmod +x /entrypoint && \
+    mkdir -p /config/fail2ban && \
+    mkdir -p /config/sshd && \
+    mkdir -p /etc/default/sshd && \
+    mkdir -p /etc/default/fail2ban
 
 ADD fail2ban /etc/default/fail2ban
 ADD sshd /etc/default/sshd
