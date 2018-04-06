@@ -212,6 +212,9 @@ fi
 
 #sed -i 's/^backend = auto/backend = systemd/' /etc/fail2ban/jail.conf
 
+if [[ -e /var/run/fail2ban/fail2ban.sock ]]; then
+	rm /var/run/fail2ban/fail2ban.sock
+fi
 
 if $startSshd; then
     service syslog-ng start
