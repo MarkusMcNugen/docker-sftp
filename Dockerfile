@@ -1,4 +1,4 @@
-FROM phusion/baseimage
+FROM phusion/baseimage:master
 
 MAINTAINER MarkusMcNugen
 # Forked from atmoz for unRAID
