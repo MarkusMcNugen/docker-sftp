@@ -20,6 +20,7 @@ COPY entrypoint /
 RUN chmod +x /entrypoint
 
 ADD fail2ban /etc/default/fail2ban
+ADD sshd /etc/default/sshd
 
 EXPOSE 22
 
