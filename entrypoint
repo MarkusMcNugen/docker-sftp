@@ -1,16 +1,31 @@
 #!/bin/bash
 set -e
 
+# Create directories if not exist
+mkdir -p /config/fail2ban
+mkdir -p /config/sshd
+
 # Copy default config files if removed
 if [[ ! -e /config/fail2ban/jail.conf ]]; then
-	echo "$(date) [err] jail.conf missing from /config/fail2ban... Replacing with default backups!"
+	echo "$(date) [err] jail.conf missing from /config/fail2ban/... Replacing with default backup!"
 	rsync -vzr --ignore-existing "/etc/default/fail2ban/" "/config/fail2ban"
 else
         echo "$(date) [info] Existing jail.conf found. Copying to container filesystem!"
-	rsync -vzr "/config/fail2ban" "/etc/default/fail2ban/"
+	rsync -vzr "/config/fail2ban/" "/etc/fail2ban"
 fi
 
+if [[ ! -e /config/sshd/sshd_config ]]; then
+	echo "$(date) [err] sshd_config missing from /config/sshd/... Replacing with default backup!"
+	rsync -vzr --ignore-existing "/etc/default/sshd/" "/config/sshd"
+else
+        echo "$(date) [info] Existing jail.conf found. Copying to container filesystem!"
+	rsync -vzr "/config/sshd/" "/etc/ssh"
+fi
+
+# Log to /config/fail2ban
 sed -i 's/^logtarget = /var/log/fail2ban.log/logtarget = /config/fail2ban/fail2ban.log/' /etc/fail2ban/fail2ban.conf
+
+# Replace port config for ssh with port 22, throws errors in fail2ban.log otherwise
 sed -i 's/^port     = ssh/port     = 22/' /etc/fail2ban/jail.conf
 sed -i 's/^port    = ssh/port     = 22/' /etc/fail2ban/jail.conf
 
