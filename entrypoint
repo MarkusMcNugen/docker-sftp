@@ -7,12 +7,12 @@ mkdir -p /config/sshd
 # Copy default config files if removed
 if [[ ! -e /config/fail2ban/jail.conf ]]; then
 	echo "$(date) [err] jail.conf missing from /config/fail2ban/... Replacing with default backup!"
-	cp "/etc/default/f2ban/jail.conf" "/config/fail2ban/jail.conf"
-	rm /config/fail2ban/jail.conf
-	cp "/config/fail2ban/jail.conf" "/etc/fail2ban/jail.conf"
+	cp /etc/default/f2ban/jail.conf /config/fail2ban/jail.conf
+	rm /etc/fail2ban/jail.conf
+	cp /config/fail2ban/jail.conf /etc/fail2ban/jail.conf
 else
         echo "$(date) [info] Existing jail.conf found. Copying to container filesystem!"
-	rm /config/fail2ban/jail.conf
+	rm /etc/fail2ban/jail.conf
 	cp "/config/fail2ban/jail.conf" "/etc/fail2ban/jail.conf"
 fi
 
