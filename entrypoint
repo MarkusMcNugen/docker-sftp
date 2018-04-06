@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+mkdir -p /config/fail2ban
+mkdir -p /config/sshd
+
 # Copy default config files if removed
 if [[ ! -e /config/fail2ban/jail.conf ]]; then
 	echo "$(date) [err] jail.conf missing from /config/fail2ban/... Replacing with default backup!"
