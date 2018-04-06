@@ -22,7 +22,7 @@ if [[ ! -e /config/sshd/sshd_config ]]; then
 	rm /etc/ssh/sshd_config
 	cp "/config/sshd/sshd_config" "/etc/ssh/sshd_config"
 else
-        echo "$(date) [info] Existing jail.conf found. Copying to container filesystem!"
+        echo "$(date) [info] Existing sshd_config found. Copying to container filesystem!"
 	rm /etc/ssh/sshd_config
 	cp "/config/sshd/sshd_config" "/etc/ssh/sshd_config"
 fi
