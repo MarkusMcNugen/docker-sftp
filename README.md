@@ -1,6 +1,6 @@
 # SFTP
 Easy to use SFTP ([SSH File Transfer Protocol](https://en.wikipedia.org/wiki/SSH_File_Transfer_Protocol)) server with [OpenSSH](https://en.wikipedia.org/wiki/OpenSSH) and [Fail2ban](https://www.fail2ban.org/wiki/index.php/Main_Page) installed for extra hardening against brute force attacks. Serves as a drop in replacement for atmoz/sftp. 
-This is an automated build linked with [phusion/baseimage(https://hub.docker.com/r/phusion/baseimage/)].
+This is an automated build linked with [phusion/baseimage](https://hub.docker.com/r/phusion/baseimage/).
 
 # Supported tags and respective `Dockerfile` links
 - [`xenial`, `latest` (*Dockerfile*)](https://github.com/markusmcnugen/docker-sftp/blob/master/Dockerfile)
@@ -162,4 +162,4 @@ bindmount /data/docs /home/peter/docs --read-only
 
 **NOTE:** Using `mount` requires that your container runs with the `CAP_SYS_ADMIN` capability turned on. [See this answer for more information](https://github.com/atmoz/sftp/issues/60#issuecomment-332909232).
 
-**Note:** The time when this image was last built can delay the availability of an OpenSSH release. Since this is an automated build linked with [phusion/baseimage(https://hub.docker.com/r/phusion/baseimage/)], the build will depend on how often they push changes (out of my control).  Typically this can take 1-5 days, but it can also take longer. You can of course make this more predictable by cloning this repo and run your own build manually.
+**Note:** The time when this image was last built can delay the availability of an OpenSSH release. Since this is an automated build linked with [phusion/baseimage](https://hub.docker.com/r/phusion/baseimage/), the build will depend on how often they push changes (out of my control).  Typically this can take 1-5 days, but it can also take longer. You can of course make this more predictable by cloning this repo and run your own build manually.
