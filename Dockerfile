@@ -15,7 +15,6 @@ RUN apt-get update && \
     mkdir -p /var/run/sshd && \
     rm -f /etc/ssh/ssh_host_*key*
 
-COPY sshd_config /etc/ssh/sshd_config
 COPY entrypoint /
 RUN chmod +x /entrypoint
 
