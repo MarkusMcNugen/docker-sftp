@@ -8,6 +8,8 @@ mkdir -p /config/sshd
 if [[ ! -e /config/fail2ban/jail.conf ]]; then
 	echo "$(date) [err] jail.conf missing from /config/fail2ban/... Replacing with default backup!"
 	cp "/etc/default/f2ban/jail.conf" "/config/fail2ban/jail.conf"
+	rm /config/fail2ban/jail.conf
+	cp "/config/fail2ban/jail.conf" "/etc/fail2ban/jail.conf"
 else
         echo "$(date) [info] Existing jail.conf found. Copying to container filesystem!"
 	rm /config/fail2ban/jail.conf
@@ -17,6 +19,8 @@ fi
 if [[ ! -e /config/sshd/sshd_config ]]; then
 	echo "$(date) [err] sshd_config missing from /config/sshd/... Replacing with default backup!"
 	cp "/etc/default/sshd/sshd_config" "/config/sshd/sshd_config"
+	rm /etc/ssh/sshd_config
+	cp "/config/sshd/sshd_config" "/etc/ssh/sshd_config"
 else
         echo "$(date) [info] Existing jail.conf found. Copying to container filesystem!"
 	rm /etc/ssh/sshd_config
