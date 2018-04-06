@@ -2,7 +2,7 @@
 
 ![alt text][preview]
 
-# SFTP
+# SFTP with Fail2ban
 Easy to use SFTP ([SSH File Transfer Protocol](https://en.wikipedia.org/wiki/SSH_File_Transfer_Protocol)) server with [OpenSSH](https://en.wikipedia.org/wiki/OpenSSH) and [Fail2ban](https://www.fail2ban.org/wiki/index.php/Main_Page) installed for extra hardening against brute force attacks. Forked from and serves as a drop in replacement for atmoz/sftp. 
 This is an automated build linked with [phusion/baseimage](https://hub.docker.com/r/phusion/baseimage/).
 
@@ -12,7 +12,7 @@ This is an automated build linked with [phusion/baseimage](https://hub.docker.co
 # Docker Features
 * Base: phusion/baseimage
 * Size: 236MB
-* Default hardened ssh config coutesy of atmoz
+* Default hardened default ssh config coutesy of atmoz
 * Fail2ban
 * Optional config volume can be mounted for custom ssh and fail2ban configuration and easily viewing fail2ban log
 
@@ -25,7 +25,7 @@ This is an automated build linked with [phusion/baseimage](https://hub.docker.co
   - Directory names at the end will be created under user's home directory with
     write permission, if they aren't already present.
 - Config volume
-  - Mount /config to a host directory to perform custom configuration of ssh and fail2ban
+  - Mount /config to a host directory to perform custom configuration of ssh and fail2ban. May need to chmod or chown the files before reading or writing to the config or logs.
 - Mount volumes
   - The users are chrooted to their home directory, so you can mount the
     volumes in separate directories inside the user's home directory
