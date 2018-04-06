@@ -220,6 +220,10 @@ if [[ -e /var/run/sshd.pid ]]; then
 	rm /var/run/sshd.pid
 fi
 
+if [[ -e /var/log/auth.log ]]; then
+	> /var/log/auth.log
+fi
+
 if $startSshd; then
     service syslog-ng start
     log "Executing sshd"
