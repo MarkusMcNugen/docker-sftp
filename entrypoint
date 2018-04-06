@@ -216,6 +216,10 @@ if [[ -e /var/run/fail2ban/fail2ban.sock ]]; then
 	rm /var/run/fail2ban/fail2ban.sock
 fi
 
+if [[ -e /var/run/sshd.pid ]]; then
+	rm /var/run/sshd.pid
+fi
+
 if $startSshd; then
     service syslog-ng start
     log "Executing sshd"
