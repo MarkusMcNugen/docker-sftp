@@ -1,12 +1,6 @@
 #!/bin/bash
 set -e
 
-# Create directories if they dont exist
-mkdir -p /config/fail2ban
-mkdir -p /config/sshd
-mkdir -p /etc/default/sshd
-mkdir -p /etc/default/fail2ban
-
 # Copy default config files if removed
 if [[ ! -e /config/fail2ban/jail.conf ]]; then
 	echo "$(date) [err] jail.conf missing from /config/fail2ban/... Replacing with default backup!"
