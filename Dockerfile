@@ -1,5 +1,9 @@
 FROM phusion/baseimage
+
 MAINTAINER MarkusMcNugen
+# Forked from atmoz for unRAID
+
+VOLUME /config
 
 # Steps done in one RUN layer:
 # - Install packages
@@ -14,6 +18,8 @@ RUN apt-get update && \
 COPY sshd_config /etc/ssh/sshd_config
 COPY entrypoint /
 RUN chmod +x /entrypoint
+
+ADD fail2ban /etc/default/fail2ban
 
 EXPOSE 22
 
