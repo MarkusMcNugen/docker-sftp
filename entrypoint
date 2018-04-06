@@ -4,18 +4,18 @@ set -e
 # Copy default config files if removed
 if [[ ! -e /config/fail2ban/jail.conf ]]; then
 	echo "$(date) [err] jail.conf missing from /config/fail2ban/... Replacing with default backup!"
-	rsync -vzr --ignore-existing "/etc/default/f2ban/" "/config/fail2ban"
+	rsync -vzrI --ignore-existing "/etc/default/f2ban/" "/config/fail2ban"
 else
         echo "$(date) [info] Existing jail.conf found. Copying to container filesystem!"
-	rsync -vzr "/config/fail2ban/" "/etc/fail2ban"
+	rsync -vzrI "/config/fail2ban/" "/etc/fail2ban"
 fi
 
 if [[ ! -e /config/sshd/sshd_config ]]; then
 	echo "$(date) [err] sshd_config missing from /config/sshd/... Replacing with default backup!"
-	rsync -vzr --ignore-existing "/etc/default/sshd/" "/config/sshd"
+	rsync -vzrI --ignore-existing "/etc/default/sshd/" "/config/sshd"
 else
         echo "$(date) [info] Existing jail.conf found. Copying to container filesystem!"
-	rsync -vzr "/config/sshd/" "/etc/ssh"
+	rsync -vzrI "/config/sshd/" "/etc/ssh"
 fi
 
 # Log to /config/fail2ban
