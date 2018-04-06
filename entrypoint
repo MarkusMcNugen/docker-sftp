@@ -4,7 +4,7 @@ set -e
 # Copy default config files if removed
 if [[ ! -e /config/fail2ban/jail.conf ]]; then
 	echo "$(date) [err] jail.conf missing from /config/fail2ban/... Replacing with default backup!"
-	rsync -vzr --ignore-existing "/etc/default/fail2ban/" "/config/fail2ban"
+	rsync -vzr --ignore-existing "/etc/default/f2ban/" "/config/fail2ban"
 else
         echo "$(date) [info] Existing jail.conf found. Copying to container filesystem!"
 	rsync -vzr "/config/fail2ban/" "/etc/fail2ban"
