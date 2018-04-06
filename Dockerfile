@@ -20,9 +20,9 @@ RUN chmod +x /entrypoint && \
     mkdir -p /config/fail2ban && \
     mkdir -p /config/sshd && \
     mkdir -p /etc/default/sshd && \
-    mkdir -p /etc/default/fail2ban
+    mkdir -p /etc/default/f2ban
 
-ADD fail2ban /etc/default/fail2ban
+ADD fail2ban /etc/default/f2ban
 ADD sshd /etc/default/sshd
 
 EXPOSE 22
