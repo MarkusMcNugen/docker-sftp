@@ -119,13 +119,31 @@ bindmount /data/docs /home/peter/docs --read-only
 
 **Note:** The time when this image was last built can delay the availability of an OpenSSH release. Since this is an automated build linked with [phusion/baseimage](https://hub.docker.com/r/phusion/baseimage/), the build will depend on how often they push changes (out of my control). You can of course make this more predictable by cloning this repo and run your own build manually.
 
-# Using Docker Compose:
+# Building the container yourself
+To build this container, clone the repository and cd into it.
+
+## Build it:
+```
+$ cd /repo/location/sftp
+$ docker build -t sftp .
+```
+## Run it:
+```
+$ docker run \
+    -v /host/config/path:/config \
+    -p 22:22 -d markusmcnugen/sftp \
+    user:pass:::upload
+```
+
+This will start a container as described in the "Run container from Docker registry" section
+
+## Using Docker Compose:
 ```
 sftp:
     image: markusmcnugen/sftp
     volumes:
-        - /host/upload:/home/foo/upload
+        - /host/upload:/home/user/upload
     ports:
         - "2222:22"
-    command: foo:pass:1001
+    command: user:pass:::upload
 ```
