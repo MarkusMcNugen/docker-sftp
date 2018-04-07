@@ -144,6 +144,6 @@ sftp:
     volumes:
         - /host/upload:/home/user/upload
     ports:
-        - "2222:22"
+        - "22:22"
     command: user:pass:::upload
 ```
