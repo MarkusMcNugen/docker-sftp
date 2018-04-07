@@ -14,43 +14,50 @@ This is an automated build linked with [phusion/baseimage](https://hub.docker.co
 * Optional config volume can be mounted for custom ssh and fail2ban configuration and easily viewing fail2ban log
 
 # Run container from Docker registry
-## Simplest docker run example
 ```
-docker run -p 22:22 -d markusmcnugen/sftp foo:pass:::upload
+docker run -v /host/config/path:/config -p 22:22 -d markusmcnugen/sftp user:pass:::upload
 ```
+User "user" with password "pass" can login with sftp and upload files to a folder called "upload". No mounted directories or custom UID/GID. Later you can inspect the files and use `--volumes-from` to mount them somewhere else (or see next example).
 
-User "foo" with password "pass" can login with sftp and upload files to a folder called "upload". No mounted directories or custom UID/GID. Later you can inspect the files and use `--volumes-from` to mount them somewhere else (or see next example).
+# Volumes, Paths, and Ports
+## Environment Variables
+## Volumes
+| Volume | Required | Function | Example |
+|----------|----------|----------|----------|
+| `config` | Yes | qBittorrent and OpenVPN config files | `/your/config/path/:/config`|
 
-## Sharing a directory from your computer without config volume mounted
-Let's mount a directory and set UID:
-```
-docker run \
-    -v /host/upload:/home/foo/upload \
-    -p 2222:22 -d markusmcnugen/sftp \
-    foo:pass:1001
-```
+## Paths
+| Path | Required | Function | Example |
+|----------|----------|----------|----------|
+| `/config/fail2ban` | Yes | qBittorrent and OpenVPN config files | `/your/config/path/:/config`|
+| `/config/sshd` | Yes | qBittorrent and OpenVPN config files | `/your/config/path/:/config`|
+| `/config/sshd/keys` | Yes | qBittorrent and OpenVPN config files | `/your/config/path/:/config`|
+| `/config/sshd/users.conf` | Yes | qBittorrent and OpenVPN config files | `/your/config/path/:/config`|
 
-## Sharing a directory from your computer with config volume mounted
+## Ports
+The OpenSSH server runs by default on port 22. You can forward the container's port 22 to the any host port.
+
+| Port | Proto | Required | Function | Example |
+|----------|----------|----------|----------|----------|
+| `22` | TCP | Yes | SSH Port | `2222:22`|
+
+## Sharing a directory from your computer
+Mount the host path to a folder inside the users home directory
 ```
 docker run \
     -v /host/config/path:/config \
     -v /host/upload:/home/foo/upload \
-    -p 2222:22 -d markusmcnugen/sftp \
+    -p 22:22 -d markusmcnugen/sftp \
     foo:pass:1001
 ```
-
-### Logging in
-The OpenSSH server runs by default on port 22, and in this example, we are forwarding the container's port 22 to the host's port 2222. To log in with the OpenSSH client, run: `sftp -P 2222 foo@<host-ip>`
 
 ## Store users in config
+Add users to /config/sshd/users.conf with the following pattern:
 ```
-docker run \
-    -v /host/config/path:/config \
-    -v mySftpVolume:/home \
-    -p 2222:22 -d markusmcnugen/sftp
+user:pass:UID:GID
 ```
 
-/config/sshd/users.conf:
+Example:
 ```
 foo:123:1001:100
 bar:abc:1002:100
@@ -58,16 +65,16 @@ baz:xyz:1003:100
 ```
 
 ## Encrypted password
-Add `:e` behind password to mark it as encrypted. Use single quotes if using terminal.
+Add `:e` behind password to mark it as encrypted. Use single quotes if using a terminal instead of users config file.
 ```
-'foo:$1$0G2g0GSt$ewU0t6GXG15.0hWoOX8X9.:e:1001'
+foo:$1$0G2g0GSt$ewU0t6GXG15.0hWoOX8X9.:e:1001
 ```
 
 Tip: you can use [atmoz/makepasswd](https://hub.docker.com/r/atmoz/makepasswd/) to generate encrypted passwords:  
 `echo -n "your-password" | docker run -i --rm atmoz/makepasswd --crypt-md5 --clearfrom=-`
 
 ## Logging in with SSH keys
-Place public keys with the users name in /config/userkeys directory. The keys will be matched against users names and copied to `.ssh/authorized_keys` for the user (you can't mount this file directly, because OpenSSH requires limited file permissions). In this example, we do not provide any password, so the user `foo` can only login with his SSH key.
+Place public keys with the users name in /config/userkeys directory. The keys will be matched against users names and copied to `.ssh/authorized_keys` for the user. 
 
 ## Providing your own SSH host key (recommended)
 This container will generate new SSH host keys at first run in /config/sshd/keys. You can place your own sshd keys in this folder and they will be copied to /etc/ssh/ when the container runs.
