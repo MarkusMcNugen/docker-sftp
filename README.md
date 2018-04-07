@@ -94,12 +94,11 @@ ssh-keygen -t rsa -b 4096 -f ssh_host_rsa_key < /dev/null
 ```
 
 ## Execute custom scripts or applications
-Put your programs in `/etc/sftp.d/` and it will automatically run when the container starts.
-See next section for an example.
+Put your programs in `/config/sshd/scripts` and it will automatically run when the container starts.
+See next subsection for an example.
 
-## Bindmount dirs from another location
+### Bindmount dirs from another location
 If you are using `--volumes-from` or just want to make a custom directory available in user's home directory, you can add a script to `/etc/sftp.d/` that bindmounts after container starts.
-
 ```
 #!/bin/bash
 # File mounted as: /etc/sftp.d/bindmount.sh
