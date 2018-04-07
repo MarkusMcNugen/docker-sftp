@@ -24,11 +24,11 @@ User "user" with password "pass" can login with sftp and upload files to a folde
 ## Volumes
 | Volume | Required | Function | Example |
 |----------|----------|----------|----------|
-| `config` | Yes | qBittorrent and OpenVPN config files | `/your/config/path/:/config`|
+| `config` | Yes | SSH and Fail2ban config files | `/your/config/path/:/config`|
 
 ## Paths
 | Path | Required | Function |
-|----------|----------|----------|----------|
+|----------|----------|----------|
 | `/config/fail2ban` | Yes | Fail2ban jail config and log |
 | `/config/sshd/keys` | Yes | SSH host keys directory |
 | `/config/sshd/sshd_config` | Yes | SSH configuration file |
