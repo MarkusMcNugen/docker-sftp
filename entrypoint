@@ -209,7 +209,7 @@ if [[ -f "$userConfFinalPath" && "$(cat "$userConfFinalPath" | wc -l)" > 0 ]]; t
 		user=usrconfig[0]
 		for file in /config/userkeys/*
 		do
-			if [[ $file = *"$user"* ]]
+			if [[ $file = *"$user"* ]]; then
 				echo "Copying $file key for $user"
 				cp "/config/userkeys/$file" "/home/$user/.ssh/keys/$file"
 			fi
