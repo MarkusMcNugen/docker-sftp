@@ -42,12 +42,13 @@ The OpenSSH server runs by default on port 22. You can forward the container's p
 |----------|----------|----------|----------|----------|
 | `22` | TCP | Yes | SSH Port | `2222:22`|
 
+#Customizing
 ## Sharing a directory from your computer
-Mount the host path to a folder inside the users home directory
+Mount the host path to a folder inside the users home directory. Example shows mounting host upload directory to upload directory in user home folder.
 ```
 docker run \
     -v /host/config/path:/config \
-    -v /host/upload:/home/foo/upload \
+    -v /host/upload:/home/user/upload \
     -p 22:22 -d markusmcnugen/sftp \
     foo:pass:1001
 ```
