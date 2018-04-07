@@ -30,17 +30,6 @@ docker run \
     foo:pass:1001
 ```
 
-### Using Docker Compose:
-```
-sftp:
-    image: markusmcnugen/sftp
-    volumes:
-        - /host/upload:/home/foo/upload
-    ports:
-        - "2222:22"
-    command: foo:pass:1001
-```
-
 ## Sharing a directory from your computer with config volume mounted
 ```
 docker run \
@@ -120,3 +109,14 @@ bindmount /data/docs /home/peter/docs --read-only
 **NOTE:** Using `mount` requires that your container runs with the `CAP_SYS_ADMIN` capability turned on. [See this answer for more information](https://github.com/atmoz/sftp/issues/60#issuecomment-332909232).
 
 **Note:** The time when this image was last built can delay the availability of an OpenSSH release. Since this is an automated build linked with [phusion/baseimage](https://hub.docker.com/r/phusion/baseimage/), the build will depend on how often they push changes (out of my control). You can of course make this more predictable by cloning this repo and run your own build manually.
+
+# Using Docker Compose:
+```
+sftp:
+    image: markusmcnugen/sftp
+    volumes:
+        - /host/upload:/home/foo/upload
+    ports:
+        - "2222:22"
+    command: foo:pass:1001
+```
