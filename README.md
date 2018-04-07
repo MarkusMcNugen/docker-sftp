@@ -1,4 +1,4 @@
-[preview]: https://raw.githubusercontent.com/MarkusMcNugen/docker-sftp/master/SFTP.png "SFTP"
+[preview]: https://raw.githubusercontent.com/MarkusMcNugen/docker-templates/master/sftp/SFTP.png "SFTP"
 
 ![alt text][preview]
 
