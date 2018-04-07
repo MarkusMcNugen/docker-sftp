@@ -32,8 +32,8 @@ User "user" with password "pass" can login with sftp and upload files to a folde
 | `/config/fail2ban` | Yes | Fail2ban jail config and log |
 | `/config/sshd/keys` | Yes | SSH host keys directory |
 | `/config/sshd/sshd_config` | Yes | SSH configuration file |
-| `/config/sshd/users.conf` | Yes | SSH users config file |
-| `/config/userkeys` | Yes | SSH user keys directory |
+| `/config/sshd/users.conf` | No | SSH users config file |
+| `/config/userkeys` | No | SSH user keys directory |
 
 ## Ports
 The OpenSSH server runs by default on port 22. You can forward the container's port 22 to the any host port.
