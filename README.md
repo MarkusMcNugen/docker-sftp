@@ -42,7 +42,7 @@ The OpenSSH server runs by default on port 22. You can forward the container's p
 |----------|----------|----------|----------|----------|
 | `22` | TCP | Yes | SSH Port | `2222:22`|
 
-#Customizing
+# Customizing
 ## Sharing a directory from your computer
 Mount the host path to a folder inside the users home directory. Example shows mounting host upload directory to upload directory in user home folder.
 ```
