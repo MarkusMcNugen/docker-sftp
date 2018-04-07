@@ -66,6 +66,8 @@ bar:abc:1002:100
 baz:xyz:1003:100
 ```
 
+Note: If no password is provided for the user, they can only login using an SSH key
+
 ## Encrypted password
 Add `:e` behind password to mark it as encrypted. Use single quotes if using a terminal instead of users config file.
 ```
