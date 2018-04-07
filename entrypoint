@@ -2,7 +2,8 @@
 set -e
 
 mkdir -p /config/fail2ban
-mkdir -p /config/sshd
+mkdir -p /config/userkeys
+mkdir -p /config/sshd/keys
 
 # Copy default config files if removed
 if [[ ! -e /config/fail2ban/jail.conf ]]; then
@@ -31,7 +32,7 @@ fi
 sed -i 's|^logtarget = /var/log/fail2ban.log|logtarget = /config/fail2ban/fail2ban.log|' /etc/fail2ban/fail2ban.conf
 
 # Paths
-userConfPath="/etc/sftp/users.conf"
+userConfPath="/config/sshd/users.conf"
 userConfPathLegacy="/etc/sftp-users.conf"
 userConfFinalPath="/var/run/sftp/users.conf"
 
@@ -189,12 +190,30 @@ if [ ! -f "$userConfFinalPath" ]; then
     fi
 
     # Generate unique ssh keys for this container, if needed
-    if [ ! -f /config/keys/ssh_host_ed25519_key ]; then
+    if [ ! -f /config/sshd/keys/ssh_host_ed25519_key ]; then
         ssh-keygen -t ed25519 -f /config/keys/ssh_host_ed25519_key -N ''
     fi
-    if [ ! -f /config/keys/ssh_host_rsa_key ]; then
+    if [ ! -f /config/sshd/keys/ssh_host_rsa_key ]; then
         ssh-keygen -t rsa -b 4096 -f /config/keys/ssh_host_rsa_key -N ''
     fi
+fi
+
+# Copy user keys if any
+if [[ -f "$userConfFinalPath" && "$(cat "$userConfFinalPath" | wc -l)" > 0 ]]; then
+	# Read users from config
+	IFS=$'\r\n' GLOBIGNORE='*' command eval 'USERRAY=($(cat /var/run/sftp/users.conf))'
+	for i in "${USERRAY[@]}"
+	do
+		# Get user name from array
+		IFS=':' read -a usrconfig <<< $i
+		user=usrconfig[0]
+		for file in /config/userkeys/*
+		do
+			if [[ $file = *"$user"* ]]
+				cp "/config/userkeys/$file" "/home/$user/.ssh/keys/$file"
+			fi
+		done
+	done
 fi
 
 # Source custom scripts, if any
