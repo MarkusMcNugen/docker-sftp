@@ -50,7 +50,7 @@ docker run \
     -v /host/config/path:/config \
     -v /host/upload:/home/user/upload \
     -p 22:22 -d markusmcnugen/sftp \
-    foo:pass:1001
+    user:pass:1001
 ```
 
 ## Store users in config
@@ -61,9 +61,9 @@ user:pass:UID:GID
 
 Example:
 ```
-foo:123:1001:100
-bar:abc:1002:100
-baz:xyz:1003:100
+user:pass:1001:100
+user2:abc:1002:100
+user3:xyz:1003:100
 ```
 
 Note: If no password is provided for the user, they can only login using an SSH key
