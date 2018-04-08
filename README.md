@@ -78,7 +78,12 @@ Tip: you can use [atmoz/makepasswd](https://hub.docker.com/r/atmoz/makepasswd/) 
 `echo -n "your-password" | docker run -i --rm atmoz/makepasswd --crypt-md5 --clearfrom=-`
 
 ## Logging in with SSH keys
-Place public keys with the users name in /config/userkeys directory. The keys will be matched against users names and copied to `.ssh/authorized_keys` for the user. 
+Place public keys with the users name in /config/userkeys directory. The keys must be matched with a users names and a .pub extension. These are copied to `.ssh/authorized_keys` for the user during container start. 
+
+Example:
+```
+user.pub
+```
 
 ## Providing your own SSH host key (recommended)
 This container will generate new SSH host keys at first run in /config/sshd/keys. You can place your own sshd keys in this folder and they will be copied to /etc/ssh/ when the container runs.
