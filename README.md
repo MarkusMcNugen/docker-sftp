@@ -20,7 +20,6 @@ docker run -v /host/config/path:/config -p 22:22 -d markusmcnugen/sftp user:pass
 User "user" with password "pass" can login with sftp and upload files to a folder called "upload". No mounted directories or custom UID/GID. Later you can inspect the files and use `--volumes-from` to mount them somewhere else.
 
 # Volumes, Paths, and Ports
-## Environment Variables
 ## Volumes
 | Volume | Required | Function | Example |
 |----------|----------|----------|----------|
