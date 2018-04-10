@@ -15,7 +15,10 @@ This is an automated build linked with [phusion/baseimage](https://hub.docker.co
 
 # Run container from Docker registry
 ```
-docker run -v /host/config/path:/config -p 22:22 -d markusmcnugen/sftp user:pass:::upload
+docker run \
+    -v /host/config/path:/config \
+    -p 22:22 -d markusmcnugen/sftp \
+    user:pass:::upload
 ```
 User "user" with password "pass" can login with sftp and upload files to a folder called "upload". No mounted directories or custom UID/GID. Later you can inspect the files and use `--volumes-from` to mount them somewhere else.
 
