@@ -156,6 +156,17 @@ fi
 
 # Create users only on first run
 if [ ! -f "$userConfFinalPath" ]; then
+		# Generate unique ssh keys for this container, if needed
+		if [ ! -f /config/sshd/keys/ssh_host_ed25519_key ]; then
+				echo "Generating sshd key..."
+				ssh-keygen -t ed25519 -f /config/sshd/keys/ssh_host_ed25519_key -N ''
+		fi
+		if [ ! -f /config/sshd/keys/ssh_host_rsa_key ]; then
+				echo "Generating sshd rsa key..."
+				ssh-keygen -t rsa -b 4096 -f /config/sshd/keys/ssh_host_rsa_key -N ''
+		fi
+
+		echo "Creating users..."
     mkdir -p "$(dirname $userConfFinalPath)"
 
     # Append mounted config to final config
@@ -187,14 +198,6 @@ if [ ! -f "$userConfFinalPath" ]; then
     elif $startSshd; then
         log "FATAL: No users provided!"
         exit 3
-    fi
-
-    # Generate unique ssh keys for this container, if needed
-    if [ ! -f /config/sshd/keys/ssh_host_ed25519_key ]; then
-        ssh-keygen -t ed25519 -f /config/keys/ssh_host_ed25519_key -N ''
-    fi
-    if [ ! -f /config/sshd/keys/ssh_host_rsa_key ]; then
-        ssh-keygen -t rsa -b 4096 -f /config/keys/ssh_host_rsa_key -N ''
     fi
 fi
 
