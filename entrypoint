@@ -102,7 +102,7 @@ function createUser() {
     fi
 
     useradd $useraddOptions $user
-    mkdir -p /home/$user
+    mkdir -p /home/$user /home/$user/.ssh
     chown root:root /home/$user
     chmod 755 /home/$user
 
@@ -116,14 +116,23 @@ function createUser() {
         usermod -p "*" $user # disabled password
     fi
 
-    # Add SSH keys to authorized_keys with valid permissions
-    if [ -d /home/$user/.ssh/keys ]; then
-        for publickey in /home/$user/.ssh/keys/*; do
-            cat $publickey >> /home/$user/.ssh/authorized_keys
-        done
-        chown $uid /home/$user/.ssh/authorized_keys
-        chmod 600 /home/$user/.ssh/authorized_keys
-    fi
+		# copy user key, if it exists
+		key_file="/config/userkeys/$user.pub"
+		if [ -f  $key_file ]; then
+			chown $uid /home/$user/.ssh
+			chmod 700 /home/$user/.ssh
+
+			echo "Copying key for $user"
+			dest_key_file="/home/$user/.ssh/$user.pub"
+			cp $key_file $dest_key_file
+			chown $uid $dest_key_file
+			chmod 600 $dest_key_file
+
+			# echo key into authorized_keys and set perms
+			cat $key_file > /home/$user/.ssh/authorized_keys
+			chown $uid /home/$user/.ssh/authorized_keys
+			chmod 600 /home/$user/.ssh/authorized_keys
+		fi
 
     # Make sure dirs exists
     if [ -n "$dir" ]; then
@@ -156,6 +165,17 @@ fi
 
 # Create users only on first run
 if [ ! -f "$userConfFinalPath" ]; then
+		# Generate unique ssh keys for this container, if needed
+		if [ ! -f /config/sshd/keys/ssh_host_ed25519_key ]; then
+				echo "Generating sshd key..."
+				ssh-keygen -t ed25519 -f /config/sshd/keys/ssh_host_ed25519_key -N ''
+		fi
+		if [ ! -f /config/sshd/keys/ssh_host_rsa_key ]; then
+				echo "Generating sshd rsa key..."
+				ssh-keygen -t rsa -b 4096 -f /config/sshd/keys/ssh_host_rsa_key -N ''
+		fi
+
+		echo "Creating users..."
     mkdir -p "$(dirname $userConfFinalPath)"
 
     # Append mounted config to final config
@@ -188,33 +208,6 @@ if [ ! -f "$userConfFinalPath" ]; then
         log "FATAL: No users provided!"
         exit 3
     fi
-
-    # Generate unique ssh keys for this container, if needed
-    if [ ! -f /config/sshd/keys/ssh_host_ed25519_key ]; then
-        ssh-keygen -t ed25519 -f /config/keys/ssh_host_ed25519_key -N ''
-    fi
-    if [ ! -f /config/sshd/keys/ssh_host_rsa_key ]; then
-        ssh-keygen -t rsa -b 4096 -f /config/keys/ssh_host_rsa_key -N ''
-    fi
-fi
-
-# Copy user keys if any
-if [[ -f "$userConfFinalPath" && "$(cat "$userConfFinalPath" | wc -l)" > 0 ]]; then
-	# Read users from config
-	IFS=$'\r\n' GLOBIGNORE='*' command eval 'USERRAY=($(cat /var/run/sftp/users.conf))'
-	for i in "${USERRAY[@]}"
-	do
-		# Get user name from array
-		IFS=':' read -a usrconfig <<< $i
-		user=usrconfig[0]
-		for file in /config/userkeys/*
-		do
-			if [[ $file = "$user.pub" ]]; then
-				echo "Copying key for $user"
-				cp "/config/userkeys/$file" "/home/$user/.ssh/keys/$file"
-			fi
-		done
-	done
 fi
 
 # Source custom scripts, if any
