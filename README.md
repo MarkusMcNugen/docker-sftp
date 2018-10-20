@@ -9,7 +9,7 @@ This is an automated build linked with [phusion/baseimage](https://hub.docker.co
 # Docker Features
 * Base: phusion/baseimage
 * Size: 236MB
-* Default hardened default ssh config coutesy of atmoz
+* Hardened default ssh config coutesy of atmoz
 * Fail2ban
 * Optional config volume can be mounted for custom ssh and fail2ban configuration and easily viewing fail2ban log
 
