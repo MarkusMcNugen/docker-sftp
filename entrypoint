@@ -124,6 +124,9 @@ function createUser() {
 
 			echo "Copying key for $user"
 			dest_key_file="/home/$user/.ssh/$user.pub"
+			if [ -f $dest_key_file ]; then
+			    rm $dest_key_file
+			fi
 			cp $key_file $dest_key_file
 			chown $uid $dest_key_file
 			chmod 600 $dest_key_file
