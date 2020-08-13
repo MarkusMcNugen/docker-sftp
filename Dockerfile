@@ -1,4 +1,4 @@
-FROM phusion/18.04-1.0.0-amd64
+FROM phusion/baseimage:18.04-1.0.0
 
 MAINTAINER MarkusMcNugen
 # Forked from atmoz for unRAID
