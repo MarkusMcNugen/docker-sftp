@@ -248,11 +248,13 @@ if $startSshd; then
     service ssh start
     echo "Executing fail2ban"
     #service fail2ban start
-    if [ -f "/config/fail2ban/fail2ban.log" ]; then
-    	./multi-tail.sh /config/fail2ban/fail2ban.log /var/log/auth.log
-    else
-        tail -f /var/log/auth.log
+    if [ ! -e "/config/fail2ban/fail2ban.log" ]; then
+    	touch "/config/fail2ban/fail2ban.log"
     fi
+    if [ ! -e "/var/log/auth.log" ]; then
+        touch "/var/log/auth.log"
+    fi
+    ./multi-tail.sh /config/fail2ban/fail2ban.log /var/log/auth.log
 else
     echo "Executing $@"
     exec "$@"
