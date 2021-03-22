@@ -241,13 +241,14 @@ if [[ -e /var/log/auth.log ]]; then
 fi
 
 if $startSshd; then
-    service syslog-ng start
-    log "Executing sshd"
+    echo "Executing syslog-ng"
+    #service syslog-ng start
+    echo "Executing sshd"
     service ssh start
-    log "Executing fail2ban"
+    echo "Executing fail2ban"
     service fail2ban start
     tailf /var/log/auth.log
 else
-    log "Executing $@"
+    echo "Executing $@"
     exec "$@"
 fi
