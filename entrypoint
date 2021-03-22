@@ -246,7 +246,7 @@ if $startSshd; then
     echo "Executing sshd"
     service ssh start
     echo "Executing fail2ban"
-    service fail2ban start
+    #service fail2ban start
     #tailf /var/log/auth.log
     while true; do sleep 86400; done
 else
