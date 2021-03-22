@@ -254,7 +254,8 @@ if $startSshd; then
     fi
     echo "Executing fail2ban"
     service fail2ban start
-    tail -f /config/fail2ban/fail2ban.log -f /var/log/auth.log
+    tail /config/fail2ban/fail2ban.log 
+    tail -f /var/log/auth.log
 else
     echo "Executing $@"
     exec "$@"
