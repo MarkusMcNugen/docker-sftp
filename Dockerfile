@@ -1,4 +1,4 @@
-FROM phusion/baseimage:18.04-1.0.0
+FROM phusion/baseimage:master-amd64
 
 MAINTAINER MarkusMcNugen
 # Forked from atmoz for unRAID
@@ -10,7 +10,8 @@ VOLUME /config
 # - OpenSSH needs /var/run/sshd to run
 # - Remove generic host keys, entrypoint generates unique keys
 RUN apt-get update && \
-    apt-get -y install openssh-server fail2ban rsync && \
+    apt-get upgrade -y && \
+    apt-get -y install openssh-server fail2ban iptables && \
     rm -rf /var/lib/apt/lists/* && \
     mkdir -p /var/run/sshd && \
     rm -f /etc/ssh/ssh_host_*key*
@@ -22,6 +23,7 @@ RUN chmod +x /entrypoint && \
 
 COPY fail2ban/jail.conf /etc/default/f2ban/jail.conf
 COPY sshd/sshd_config /etc/default/sshd/sshd_config
+COPY syslog-ng/syslog-ng.conf /etc/syslog-ng/syslog-ng.conf
 
 EXPOSE 22
 

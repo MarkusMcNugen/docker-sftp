@@ -5,10 +5,26 @@ mkdir -p /config/fail2ban
 mkdir -p /config/userkeys
 mkdir -p /config/sshd/keys
 
+# Modify default fail2ban.conf file
+sed -i 's|^logtarget = /var/log/fail2ban.log|logtarget = /config/fail2ban/fail2ban.log|' /etc/fail2ban/fail2ban.conf
+sed -i 's|^dbfile = /var/lib/fail2ban/fail2ban.sqlite3|dbfile = /config/fail2ban/fail2ban.sqlite3|' /etc/fail2ban/fail2ban.conf
+
+# Copy default config files if removed
+if [[ ! -e /config/fail2ban/fail2ban.conf ]]; then
+	echo "$(date) [err] fail2ban.conf missing from /config/fail2ban/... Replacing with default backup!"
+	cp "/etc/fail2ban/fail2ban.conf" "/config/fail2ban/fail2ban.conf"
+else
+        echo "$(date) [info] Existing fail2ban.conf found. Copying to container filesystem!"
+	rm /etc/fail2ban/fail2ban.conf
+	cp "/config/fail2ban/fail2ban.conf" "/etc/fail2ban/fail2ban.conf"
+fi
+
 # Copy default config files if removed
 if [[ ! -e /config/fail2ban/jail.conf ]]; then
 	echo "$(date) [err] jail.conf missing from /config/fail2ban/... Replacing with default backup!"
-	cp "/etc/fail2ban/jail.conf" "/config/fail2ban/jail.conf"
+	cp "/etc/default/f2ban/jail.conf" "/config/fail2ban/jail.conf"
+	rm /etc/fail2ban/jail.conf
+	cp "/config/fail2ban/jail.conf" "/etc/fail2ban/jail.conf"
 else
         echo "$(date) [info] Existing jail.conf found. Copying to container filesystem!"
 	rm /etc/fail2ban/jail.conf
@@ -22,12 +38,9 @@ if [[ ! -e /config/sshd/sshd_config ]]; then
 	cp "/config/sshd/sshd_config" "/etc/ssh/sshd_config"
 else
         echo "$(date) [info] Existing sshd_config found. Copying to container filesystem!"
-	mv /etc/ssh/sshd_config /etc/ssh/sshd_config.bak
+	rm /etc/ssh/sshd_config
 	cp "/config/sshd/sshd_config" "/etc/ssh/sshd_config"
 fi
-
-# Log to /config/fail2ban
-sed -i 's|^logtarget = /var/log/fail2ban.log|logtarget = /config/fail2ban/fail2ban.log|' /etc/fail2ban/fail2ban.conf
 
 # Paths
 userConfPath="/config/sshd/users.conf"
@@ -207,7 +220,8 @@ if [[ -f "$userConfFinalPath" && "$(cat "$userConfFinalPath" | wc -l)" > 0 ]]; t
         createUser "$user"
     done < "$userConfFinalPath"
 elif $startSshd; then
-    log "FATAL: No users provided!"
+    log "FATAL: No users provided in /config/sshd/users.conf file see Github readme for help"
+    touch /config/sshd/users.conf
     exit 3
 fi
 
@@ -239,13 +253,20 @@ if [[ -e /var/log/auth.log ]]; then
 fi
 
 if $startSshd; then
+    echo "Executing syslog-ng"
     service syslog-ng start
-    log "Executing sshd"
+    echo "Executing sshd"
     service ssh start
-    log "Executing fail2ban"
+    if [ ! -e "/config/fail2ban/fail2ban.log" ]; then
+    	touch "/config/fail2ban/fail2ban.log"
+    fi
+    if [ ! -e "/var/log/auth.log" ]; then
+        touch "/var/log/auth.log"
+    fi
+    echo "Executing fail2ban"
     service fail2ban start
-    tailf /var/log/auth.log
+    tail -F /config/fail2ban/fail2ban.log -F /var/log/auth.log
 else
-    log "Executing $@"
+    echo "Executing $@"
     exec "$@"
 fi
