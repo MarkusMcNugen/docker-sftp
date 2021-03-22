@@ -247,7 +247,7 @@ if $startSshd; then
     echo "Executing sshd"
     service ssh start
     echo "Executing fail2ban"
-    service fail2ban start
+    #service fail2ban start
     if [ -f "/config/fail2ban/fail2ban.log" ]; then
     	tail -f /config/fail2ban/fail2ban.log
     else
