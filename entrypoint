@@ -242,12 +242,12 @@ fi
 
 if $startSshd; then
     echo "Executing syslog-ng"
-    #service syslog-ng start
+    service syslog-ng start
     echo "Executing sshd"
     service ssh start
     echo "Executing fail2ban"
-    #service fail2ban start
-    #tailf /var/log/auth.log
+    service fail2ban start
+    tailf /var/log/auth.log
     while true; do sleep 86400; done
 else
     echo "Executing $@"
