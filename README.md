@@ -32,18 +32,20 @@ User "user" with password "pass" can login with sftp and upload files to a folde
 ### SSH
 | Path | Required | Function |
 |----------|----------|----------|
-| `/config/sshd/keys` | Yes | SSH host keys directory |
-| `/config/sshd/sshd_config` | Yes | SSH server configuration file |
+| `/config/sshd/keys` | Yes* | SSH host keys directory |
+| `/config/sshd/sshd_config` | Yes* | SSH server configuration file |
 | `/config/sshd/users.conf` | Yes | SSH users config file |
 | `/config/userkeys` | No | SSH user keys directory |
 
 ### Fail2Ban
 | Path | Required | Function |
 |----------|----------|----------|
-| `/config/fail2ban` | Yes | Fail2ban jail config and log directory |
-| `/config/fail2ban/fail2ban.conf` | No | Fail2Ban config file |
-| `/config/fail2ban/jail.conf` | No | Fail2Ban jail config file |
-| `/config/fail2ban/fail2ban.sqlite3` | No | Auto generated Fail2Ban SQLite DB for persistent bans between reboots |
+| `/config/fail2ban` | Yes | Fail2ban config and log directory |
+| `/config/fail2ban/fail2ban.conf` | No* | Fail2Ban config file |
+| `/config/fail2ban/jail.conf` | No* | Fail2Ban jail config file |
+| `/config/fail2ban/fail2ban.sqlite3` | No* | Auto generated Fail2Ban SQLite DB for persistent bans between reboots |
+
+*These files are automatically created if they are not present when the container is started
 
 ## Ports
 The OpenSSH server runs by default on port 22. You can forward the container's port 22 to the any host port.
