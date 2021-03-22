@@ -11,13 +11,15 @@ VOLUME /config
 # - Remove generic host keys, entrypoint generates unique keys
 RUN apt-get update && \
     apt-get upgrade -y && \
-    apt-get -y install openssh-server fail2ban iptables multitail && \
+    apt-get -y install openssh-server fail2ban iptables && \
     rm -rf /var/lib/apt/lists/* && \
     mkdir -p /var/run/sshd && \
     rm -f /etc/ssh/ssh_host_*key*
 
 COPY entrypoint /
+COPY multi-tail.sh /
 RUN chmod +x /entrypoint && \
+    chmod +x /multi-tail.sh && \
     mkdir -p /etc/default/sshd && \
     mkdir -p /etc/default/f2ban
 
