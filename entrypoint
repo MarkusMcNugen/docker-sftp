@@ -228,6 +228,7 @@ if [ -d /config/sshd/scripts ]; then
 fi
 
 #sed -i 's/^backend = auto/backend = systemd/' /etc/fail2ban/jail.conf
+sed -i '/dbfile = /var/lib/fail2ban/fail2ban.sqlite3/c\dbfile = /config/fail2ban/fail2ban.sqlite3' /etc/fail2ban/fail2ban.conf
 
 if [[ -e /var/run/fail2ban/fail2ban.sock ]]; then
 	rm /var/run/fail2ban/fail2ban.sock
@@ -254,7 +255,6 @@ if $startSshd; then
     fi
     echo "Executing fail2ban"
     service fail2ban start
-    tail /config/fail2ban/fail2ban.log 
     tail -f /var/log/auth.log
 else
     echo "Executing $@"
