@@ -209,7 +209,8 @@ if [[ -f "$userConfFinalPath" && "$(cat "$userConfFinalPath" | wc -l)" > 0 ]]; t
         createUser "$user"
     done < "$userConfFinalPath"
 elif $startSshd; then
-    log "FATAL: No users provided! Create /config/sshd/users.conf file see Github readme for help"
+    log "FATAL: No users provided in /config/sshd/users.conf file see Github readme for help"
+    touch /config/sshd/users.conf
     exit 3
 fi
 
