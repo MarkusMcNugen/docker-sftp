@@ -56,7 +56,7 @@ The OpenSSH server runs by default on port 22. You can forward the container's p
 
 # Customizing
 ## Sharing a directory from your computer
-Mount the host path to a folder inside the users home directory. Example shows mounting host upload directory to upload directory in user home folder.
+Mount the host path to a folder inside the users home directory. Example shows mounting host upload directory to upload directory in user home folder. Alternatively see the *bindmount dirs from another location* below for an example of mapping to a different directory and using scripts to mount dirs inside users home folders.
 ```
 docker run \
     -v /host/config/path:/config \
