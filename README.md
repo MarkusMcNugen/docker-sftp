@@ -4,10 +4,9 @@
 
 # SFTP with Fail2ban
 Easy to use SFTP ([SSH File Transfer Protocol](https://en.wikipedia.org/wiki/SSH_File_Transfer_Protocol)) server with [OpenSSH](https://en.wikipedia.org/wiki/OpenSSH) and [Fail2ban](https://www.fail2ban.org/wiki/index.php/Main_Page) installed for extra hardening against brute force attacks. Forked from atmoz/sftp. 
-Base is [phusion/baseimage](https://hub.docker.com/r/phusion/baseimage/).
 
 # Docker Features
-* Base: phusion/baseimage
+* Base: [phusion/baseimage](https://hub.docker.com/r/phusion/baseimage/)
 * Size: 357MB
 * Hardened default ssh config coutesy of atmoz
 * Fail2ban
