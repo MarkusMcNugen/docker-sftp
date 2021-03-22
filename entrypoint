@@ -248,8 +248,11 @@ if $startSshd; then
     service ssh start
     echo "Executing fail2ban"
     service fail2ban start
-    tail -f /var/log/auth.log
-    while true; do sleep 86400; done
+    if [ -f "/config/fail2ban/fail2ban.log" ]; then
+    	tail -f /config/fail2ban/fail2ban.log
+    else
+        tail -f /var/log/auth.log
+    fi
 else
     echo "Executing $@"
     exec "$@"
