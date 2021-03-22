@@ -6,7 +6,8 @@ mkdir -p /config/userkeys
 mkdir -p /config/sshd/keys
 
 # Modify default fail2ban.conf file
-sed -i '/dbfile = /var/lib/fail2ban/fail2ban.sqlite3/c\dbfile = /config/fail2ban/fail2ban.sqlite3' /etc/fail2ban/fail2ban.conf
+sed -i 's|^logtarget = /var/log/fail2ban.log|logtarget = /config/fail2ban/fail2ban.log|' /etc/fail2ban/fail2ban.conf
+sed -i 's|^dbfile = /var/lib/fail2ban/fail2ban.sqlite3|dbfile = /config/fail2ban/fail2ban.sqlite3|' /etc/fail2ban/fail2ban.conf
 
 # Copy default config files if removed
 if [[ ! -e /config/fail2ban/fail2ban.conf ]]; then
@@ -40,9 +41,6 @@ else
 	rm /etc/ssh/sshd_config
 	cp "/config/sshd/sshd_config" "/etc/ssh/sshd_config"
 fi
-
-# Log to /config/fail2ban
-sed -i 's|^logtarget = /var/log/fail2ban.log|logtarget = /config/fail2ban/fail2ban.log|' /etc/fail2ban/fail2ban.conf
 
 # Paths
 userConfPath="/config/sshd/users.conf"
