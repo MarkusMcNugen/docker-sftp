@@ -1,4 +1,4 @@
-FROM ubuntu:18.04
+FROM phusion/baseimage:master-amd64
 
 MAINTAINER MarkusMcNugen
 # Forked from atmoz for unRAID
@@ -22,6 +22,7 @@ RUN chmod +x /entrypoint && \
 
 COPY fail2ban/jail.conf /etc/default/f2ban/jail.conf
 COPY sshd/sshd_config /etc/default/sshd/sshd_config
+COPY syslog-ng/syslog-ng.conf /etc/syslog-ng/syslog-ng.conf
 
 EXPOSE 22
 
