@@ -17,9 +17,7 @@ RUN apt-get update && \
     rm -f /etc/ssh/ssh_host_*key*
 
 COPY entrypoint /
-COPY multi-tail.sh /
 RUN chmod +x /entrypoint && \
-    chmod +x /multi-tail.sh && \
     mkdir -p /etc/default/sshd && \
     mkdir -p /etc/default/f2ban
 
