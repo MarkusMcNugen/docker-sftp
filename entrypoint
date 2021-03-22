@@ -249,7 +249,7 @@ if $startSshd; then
     echo "Executing fail2ban"
     #service fail2ban start
     if [ -f "/config/fail2ban/fail2ban.log" ]; then
-    	tail -f /config/fail2ban/fail2ban.log
+    	multitail -f /config/fail2ban/fail2ban.log /var/log/auth.log
     else
         tail -f /var/log/auth.log
     fi
