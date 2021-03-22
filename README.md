@@ -34,7 +34,7 @@ User "user" with password "pass" can login with sftp and upload files to a folde
 | `/config/fail2ban` | Yes | Fail2ban jail config and log directory |
 | `/config/sshd/keys` | Yes | SSH host keys directory |
 | `/config/sshd/sshd_config` | Yes | SSH configuration file |
-| `/config/sshd/users.conf` | No | SSH users config file |
+| `/config/sshd/users.conf` | Yes | SSH users config file |
 | `/config/userkeys` | No | SSH user keys directory |
 
 ## Ports
