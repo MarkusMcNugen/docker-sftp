@@ -7,7 +7,7 @@ Easy to use SFTP ([SSH File Transfer Protocol](https://en.wikipedia.org/wiki/SSH
 
 # Docker Features
 * Base: [phusion/baseimage](https://hub.docker.com/r/phusion/baseimage/)
-* Size: 236MB
+* Size: 357MB
 * Hardened default ssh config coutesy of atmoz
 * Fail2ban
 * Optional config volume can be mounted for custom ssh and fail2ban configuration and easily viewing fail2ban log
