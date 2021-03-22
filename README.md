@@ -38,7 +38,7 @@ User "user" with password "pass" can login with sftp and upload files to a folde
 | `/config/userkeys` | No | SSH user keys directory |
 
 ## Ports
-The OpenSSH server runs by default on port 22. You can forward the container's port 22 to the any host port.
+The OpenSSH server runs by default on port 22. You can forward the container's port 22 to any host port.
 
 | Port | Proto | Required | Function | Example |
 |----------|----------|----------|----------|----------|
