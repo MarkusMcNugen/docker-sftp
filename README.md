@@ -8,7 +8,7 @@ This is an automated build linked with [phusion/baseimage](https://hub.docker.co
 
 # Docker Features
 * Base: phusion/baseimage
-* Size: 236MB
+* Size: 357MB
 * Hardened default ssh config coutesy of atmoz
 * Fail2ban
 * Optional config volume can be mounted for custom ssh and fail2ban configuration and easily viewing fail2ban log
@@ -28,14 +28,22 @@ User "user" with password "pass" can login with sftp and upload files to a folde
 |----------|----------|----------|----------|
 | `config` | Yes | SSH and Fail2ban config files | `/your/config/path/:/config`|
 
-## Paths
+## Paths/Files
+### SSH
+| Path | Required | Function |
+|----------|----------|----------|
+| `/config/sshd/keys` | Yes | SSH host keys directory |
+| `/config/sshd/sshd_config` | Yes | SSH server configuration file |
+| `/config/sshd/users.conf` | Yes | SSH users config file |
+| `/config/userkeys` | No | SSH user keys directory |
+
+### Fail2Ban
 | Path | Required | Function |
 |----------|----------|----------|
 | `/config/fail2ban` | Yes | Fail2ban jail config and log directory |
-| `/config/sshd/keys` | Yes | SSH host keys directory |
-| `/config/sshd/sshd_config` | Yes | SSH configuration file |
-| `/config/sshd/users.conf` | Yes | SSH users config file |
-| `/config/userkeys` | No | SSH user keys directory |
+| `/config/fail2ban/fail2ban.conf` | No | Fail2Ban config file |
+| `/config/fail2ban/jail.conf` | No | Fail2Ban jail config file |
+| `/config/fail2ban/fail2ban.sqlite3` | No | Auto generated Fail2Ban SQLite DB for persistent bans between reboots |
 
 ## Ports
 The OpenSSH server runs by default on port 22. You can forward the container's port 22 to the any host port.
@@ -55,7 +63,7 @@ docker run \
     user:pass:1001
 ```
 
-## Store users in config
+## Add SSH users
 Add users to /config/sshd/users.conf with the following pattern:
 ```
 user:pass:UID:GID
