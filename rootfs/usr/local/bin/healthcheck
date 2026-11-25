@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Container health check. Healthy means sshd listens on every port it was
+# configured with and, when enabled, the fail2ban server is up. It reads
+# /proc instead of connecting, so it never adds a line to the auth log that
+# fail2ban watches.
+set -euo pipefail
+
+readonly RUN_DIR=/run/sftp
+
+if [[ ! -s $RUN_DIR/ports ]]; then
+    echo "not started yet"
+    exit 1
+fi
+
+while read -r port; do
+    hex=$(printf '%04X' "$port")
+    # st 0A is LISTEN in /proc/net/tcp and /proc/net/tcp6.
+    if ! grep -qsE "^ *[0-9]+: [0-9A-F]+:${hex} [0-9A-F]+:[0-9A-F]+ 0A " /proc/net/tcp /proc/net/tcp6; then
+        echo "sshd is not listening on port $port"
+        exit 1
+    fi
+done <"$RUN_DIR/ports"
+
+if [[ -e $RUN_DIR/fail2ban-enabled ]]; then
+    if [[ ! -S /run/fail2ban/fail2ban.sock || ! -s /run/fail2ban/fail2ban.pid ]]; then
+        echo "fail2ban is not running"
+        exit 1
+    fi
+    read -r pid </run/fail2ban/fail2ban.pid
+    if ! kill -0 "$pid"; then
+        echo "fail2ban (pid $pid) is gone"
+        exit 1
+    fi
+fi
+
+echo "healthy"

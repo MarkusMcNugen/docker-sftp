@@ -1,0 +1,6 @@
+# Everything copied into the image runs on Linux. A CRLF checkout on
+# Windows would otherwise ship scripts that fail with "bad interpreter".
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary

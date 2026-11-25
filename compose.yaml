@@ -1,0 +1,37 @@
+# Example deployment with every hardening option the image supports.
+# Put your accounts in ./config/sshd/users.conf before the first start.
+services:
+  sftp:
+    image: markusmcnugen/sftp:2
+    container_name: sftp
+    restart: unless-stopped
+    ports:
+      - "2222:22"
+    volumes:
+      - ./config:/config
+      # A host directory, shared into one user's jail.
+      - ./data/alice:/home/alice/upload
+    environment:
+      TZ: Etc/UTC
+      SFTP_LOG_TRANSFERS: "true"
+    # The capabilities sshd, the chroot and fail2ban need, and no others.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+      - SYS_CHROOT
+      - KILL
+      - NET_BIND_SERVICE
+      - NET_ADMIN
+      - NET_RAW
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

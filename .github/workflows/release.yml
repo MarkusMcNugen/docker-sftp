@@ -1,0 +1,177 @@
+name: Release
+
+# Builds, tests and publishes the newest release. A v* tag publishes that
+# release; the weekly schedule and a manual run rebuild the newest v* tag,
+# so Debian security updates reach the published image without a commit.
+# Every run tests each architecture on a native runner before publishing.
+on:
+  push:
+    tags: ["v*"]
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+# Actions are pinned to commit SHAs; Dependabot keeps them current.
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Release tag to build
+        id: tag
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" = tag ]; then
+            tag=$REF_NAME
+          else
+            tag=$(git tag --list 'v*' --sort=-v:refname | head -n 1)
+          fi
+          if [ -z "$tag" ]; then
+            echo "::error::no v* tag exists yet, so there is no release to build"
+            exit 1
+          fi
+          echo "building $tag"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+
+  lint:
+    needs: resolve
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+      # A pinned shellcheck, so the runner image's own version cannot
+      # disagree with the one used during development.
+      - name: shellcheck
+        run: >-
+          docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.11.0 -x
+          rootfs/usr/local/bin/entrypoint
+          rootfs/usr/local/bin/healthcheck
+          tests/run-tests.sh
+      - uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: Dockerfile
+
+  test:
+    needs: [resolve, lint]
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            scope: linux-amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            scope: linux-arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          load: true
+          pull: true
+          tags: sftp:ci
+          cache-from: type=gha,scope=${{ matrix.scope }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.scope }}
+      - name: Integration tests
+        run: tests/run-tests.sh sftp:ci
+      - name: Vulnerability report
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: sftp:ci
+          format: sarif
+          output: trivy-${{ matrix.scope }}.sarif
+      - name: Upload vulnerability report
+        uses: github/codeql-action/upload-sarif@915412ff23e8b7659517e607487dbeae018f2934 # v4.39.5
+        with:
+          sarif_file: trivy-${{ matrix.scope }}.sarif
+          category: trivy-${{ matrix.scope }}
+      # Fails the release on a critical vulnerability Debian has already
+      # fixed, since the rebuild should have picked the fix up.
+      - name: Vulnerability gate
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: sftp:ci
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          skip-setup-trivy: true
+
+  # Both architectures build from the layers the test jobs cached, so the
+  # published layers are the ones the suite ran against.
+  publish:
+    needs: [resolve, test]
+    runs-on: ubuntu-24.04
+    # The Docker Hub credentials are secrets of this environment.
+    environment: DockerHub
+    permissions:
+      contents: read
+      packages: write
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Log in to Docker Hub
+        if: env.DOCKERHUB_USERNAME != ''
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: |
+            name=markusmcnugen/sftp,enable=${{ env.DOCKERHUB_USERNAME != '' }}
+            name=ghcr.io/markusmcnugen/sftp
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.resolve.outputs.tag }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.resolve.outputs.tag }}
+            type=semver,pattern={{major}},value=${{ needs.resolve.outputs.tag }}
+            type=raw,value=latest
+      - name: Build and push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+          cache-from: |
+            type=gha,scope=linux-amd64
+            type=gha,scope=linux-arm64

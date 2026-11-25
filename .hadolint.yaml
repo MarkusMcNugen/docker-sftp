@@ -1,0 +1,4 @@
+ignored:
+  # Debian removes superseded package versions from its mirrors, so pinned
+  # versions would break the weekly rebuild that delivers security fixes.
+  - DL3008

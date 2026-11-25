@@ -1,167 +1,201 @@
-[preview]: https://raw.githubusercontent.com/MarkusMcNugen/docker-templates/master/sftp/SFTP.png "SFTP"
+<div align="center">
 
-![alt text][preview]
+<img src="https://raw.githubusercontent.com/MarkusMcNugen/docker-templates/master/sftp/SFTP.png" alt="SFTP logo" width="240"/>
 
-# SFTP with Fail2ban
-Easy to use SFTP ([SSH File Transfer Protocol](https://en.wikipedia.org/wiki/SSH_File_Transfer_Protocol)) server with [OpenSSH](https://en.wikipedia.org/wiki/OpenSSH) and [Fail2ban](https://www.fail2ban.org/wiki/index.php/Main_Page) installed for extra hardening against brute force attacks. Forked from atmoz/sftp. 
+# SFTP
 
-# Docker Features
-* Base: [phusion/baseimage](https://hub.docker.com/r/phusion/baseimage/)
-* Size: 357MB
-* Hardened default ssh config coutesy of atmoz
-* Fail2ban
-* Optional config volume can be mounted for custom ssh and fail2ban configuration and easily viewing fail2ban log
+**A hardened OpenSSH SFTP server with chroot jails and fail2ban, in one container.**
 
-# Run container from Docker registry
-```
-docker run \
-    -v /host/config/path:/config \
-    -p 22:22 -d markusmcnugen/sftp \
-    user:pass:::upload
-```
-User "user" with password "pass" can login with sftp and upload files to a folder called "upload". No mounted directories or custom UID/GID. Later you can inspect the files and use `--volumes-from` to mount them somewhere else.
+[![Release](https://img.shields.io/github/actions/workflow/status/MarkusMcNugen/docker-sftp/release.yml?label=release&style=flat-square)](https://github.com/MarkusMcNugen/docker-sftp/actions/workflows/release.yml)
+[![Docker pulls](https://img.shields.io/docker/pulls/markusmcnugen/sftp?style=flat-square)](https://hub.docker.com/r/markusmcnugen/sftp)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](https://github.com/MarkusMcNugen/docker-sftp/blob/main/LICENSE.txt)
+[![Debian 13 | OpenSSH 10](https://img.shields.io/badge/Debian%2013-OpenSSH%2010-A81D33.svg?style=flat-square)](https://www.debian.org/releases/trixie/)
 
-# Volumes, Paths, and Ports
-## Volumes
-| Volume | Required | Function | Example |
-|----------|----------|----------|----------|
-| `config` | Yes | SSH and Fail2ban config files | `/your/config/path/:/config`|
+**[Documentation](https://markusmcnugen.github.io/docker-sftp/)** | [Your First Server](https://markusmcnugen.github.io/docker-sftp/docs/tutorials/first-server/) | [Changelog](https://github.com/MarkusMcNugen/docker-sftp/blob/main/CHANGELOG.md)
 
-## Paths/Files
-### SSH
-| Path | Required | Function |
-|----------|----------|----------|
-| `/config/sshd/keys` | Yes* | SSH host keys directory |
-| `/config/sshd/sshd_config` | Yes* | SSH server configuration file |
-| `/config/sshd/users.conf` | Yes | SSH users config file |
-| `/config/userkeys` | No | SSH user keys directory |
+Each account is jailed in its home directory, fail2ban bans password guessers, and one `/config` volume holds everything, applied again on every start.
 
-### Fail2Ban
-| Path | Required | Function |
-|----------|----------|----------|
-| `/config/fail2ban` | Yes | Fail2ban config and log directory |
-| `/config/fail2ban/fail2ban.conf` | No* | Fail2Ban config file |
-| `/config/fail2ban/jail.conf` | No* | Fail2Ban jail config file |
-| `/config/fail2ban/fail2ban.sqlite3` | No* | Auto generated Fail2Ban SQLite DB for persistent bans between reboots |
+</div>
 
-*These files are automatically created if they are not present when the container is started
+---
 
-## Ports
-The OpenSSH server runs by default on port 22. You can forward the container's port 22 to any host port.
+<details>
+<summary><b>Table of contents</b></summary>
 
-| Port | Proto | Required | Function | Example |
-|----------|----------|----------|----------|----------|
-| `22` | TCP | Yes | SSH Port | `2222:22`|
+- [Features](#features)
+- [Quick start](#quick-start)
+- [Why this image](#why-this-image)
+- [Accounts](#accounts)
+- [Settings](#settings)
+- [Security](#security)
+- [Upgrading from 1.x](#upgrading-from-1x)
+- [Repository layout](#repository-layout)
+- [Building and testing](#building-and-testing)
+- [Platforms](#platforms)
+- [Wiki](#wiki)
+- [Credits and influences](#credits-and-influences)
+- [Use of AI tools](#use-of-ai-tools)
+- [License](#license)
+- [Contributing](#contributing)
 
-# Customizing
-## Sharing a directory from your computer
-Mount the host path to a folder inside the users home directory. Example shows mounting host upload directory to upload directory in user home folder. Alternatively see the *bindmount dirs from another location* below for an example of mapping to a different directory and using scripts to mount dirs inside users home folders.
-```
-docker run \
-    -v /host/config/path:/config \
-    -v /host/upload:/home/user/upload \
-    -p 22:22 -d markusmcnugen/sftp \
-    user:pass:1001
-```
+</details>
 
-## Add SSH users
-Add users to /config/sshd/users.conf with the following pattern:
-```
-user:pass:UID:GID
-```
+---
 
-Example:
-```
-user:pass:1001:100
-user2:abc:1002:100
-user3:xyz:1003:100
+## Features
+
+<details open>
+<summary><b>What you get</b></summary>
+
+- Debian 13 with OpenSSH 10 and fail2ban 1.1, rebuilt every week for security updates.
+- [SFTP only](https://markusmcnugen.github.io/docker-sftp/docs/explanation/security-model/): no shells, no forwarding, each account jailed in `/home/<name>`.
+- Post-quantum hybrid key exchange first; SHA-1, CBC, MD5 and 64-bit MACs refused.
+- [fail2ban bans](https://markusmcnugen.github.io/docker-sftp/docs/how-to/tune-fail2ban/) that double for repeat offenders and survive restarts.
+- [Accounts](https://markusmcnugen.github.io/docker-sftp/docs/how-to/add-users/) from a file, an environment variable, a Docker secret or the command line, with plain or [hashed passwords](https://markusmcnugen.github.io/docker-sftp/docs/how-to/use-hashed-passwords/).
+- Every start reconciles accounts: a changed password, a removed user or a revoked key takes effect on restart.
+- [Public keys](https://markusmcnugen.github.io/docker-sftp/docs/how-to/use-public-keys/) installed root-owned outside the jail, where users cannot add their own.
+- An optional [log of every file operation](https://markusmcnugen.github.io/docker-sftp/docs/how-to/log-transfers/).
+- A configuration mistake stops the container with one line naming it.
+- Exits when any service dies, stops in under a second, and reports its health.
+- [Runs with ten capabilities](https://markusmcnugen.github.io/docker-sftp/docs/how-to/harden-the-container/) and `no-new-privileges`; images for amd64 and arm64.
+
+</details>
+
+## Quick start
+
+```bash
+mkdir -p /srv/sftp/alice && chown 1001:100 /srv/sftp/alice
+
+docker run -d --name sftp --restart unless-stopped \
+  --cap-add NET_ADMIN --cap-add NET_RAW \
+  -p 2222:22 \
+  -v /srv/sftp/config:/config \
+  -v /srv/sftp/alice:/home/alice/upload \
+  markusmcnugen/sftp alice:changeme:1001:100
 ```
 
-Note: If no password is provided for the user, they can only login using an SSH key
-
-## Encrypted password
-Add `:e` behind password to mark it as encrypted. Use single quotes if using a terminal instead of users config file.
-```
-foo:$1$0G2g0GSt$ewU0t6GXG15.0hWoOX8X9.:e:1001
+```bash
+sftp -P 2222 alice@localhost
 ```
 
-Tip: you can use [atmoz/makepasswd](https://hub.docker.com/r/atmoz/makepasswd/) to generate encrypted passwords:  
-`echo -n "your-password" | docker run -i --rm atmoz/makepasswd --crypt-md5 --clearfrom=-`
+Alice lands in `/` of her jail and can write to `upload`, which is `/srv/sftp/alice` on the host. The first start generates host keys in `/config/sshd/keys` and prints their fingerprints in `docker logs sftp`; compare them with what your client shows on first connect.
 
-## Logging in with SSH keys
-Place public keys with the users name in /config/userkeys directory. The keys must be matched with a users names and a .pub extension. These are copied to `.ssh/authorized_keys` for the user during container start. 
+[Your First Server](https://markusmcnugen.github.io/docker-sftp/docs/tutorials/first-server/) walks through key logins and fail2ban as well. [`compose.yaml`](https://github.com/MarkusMcNugen/docker-sftp/blob/main/compose.yaml) is a deployment with every hardening option.
 
-Example:
-```
-user.pub
-```
+## Why this image
 
-## Providing your own SSH host key (recommended)
-This container will generate new SSH host keys at first run in /config/sshd/keys. You can place your own sshd keys in this folder and they will be copied to /etc/ssh/ when the container runs.
+Running `sshd` for file transfer alone takes a chroot that sshd will accept, keys that users cannot change, a crypto policy, a jail for brute-force sources and a way to keep accounts in step with a list. This image does all of it from a single account line per user, checks the whole configuration before it listens, and keeps working configuration in `/config` across image updates: settings go in drop-in files that updates never overwrite.
 
-Tip: you can generate your keys with these commands:
+## Accounts
+
+One line per account, in `/config/sshd/users.conf`:
 
 ```
-ssh-keygen -t ed25519 -f ssh_host_ed25519_key < /dev/null
-ssh-keygen -t rsa -b 4096 -f ssh_host_rsa_key < /dev/null
+name:password[:e][:uid[:gid[:dir1,dir2,...]]]
 ```
 
-## Execute custom scripts or applications
-Put your programs in `/config/sshd/scripts` and it will automatically run when the container starts.
-See next subsection for an example.
-
-### Bindmount dirs from another location
-If you are using `--volumes-from` or just want to make a custom directory available in user's home directory, you can add a script to `/config/sshd/scripts/` that bindmounts after container starts.
-```
-#!/bin/bash
-# File mounted as: /config/sshd/scripts/bindmount.sh
-# Just an example (make your own)
-
-function bindmount() {
-    if [ -d "$1" ]; then
-        mkdir -p "$2"
-    fi
-    mount --bind $3 "$1" "$2"
-}
-
-# Remember permissions, you may have to fix them:
-# chown -R :users /data/common
-
-bindmount /data/admin-tools /home/admin/tools
-bindmount /data/common /home/dave/common
-bindmount /data/common /home/peter/common
-bindmount /data/docs /home/peter/docs --read-only
+```text
+alice:changeme:1001:100:upload
+bob::1002:100:inbox,outbox
+carol:$y$j9T$6IoIpga7qoVTKEtg7uOmk.$wqs4plcBkLh9AkLUNTXVh2MqiT4GaFcVqfk.9yQ.N/0:e:1003
 ```
 
-**NOTE:** Using `mount` requires that your container runs with the `CAP_SYS_ADMIN` capability turned on. [See this answer for more information](https://github.com/atmoz/sftp/issues/60#issuecomment-332909232).
+Bob has no password and logs in with the key in `/config/userkeys/bob.pub`. Carol's password is a hash from `docker run --rm -it markusmcnugen/sftp mkpasswd -m yescrypt`. The grammar, the other sources of accounts and every rule are in [users.conf](https://markusmcnugen.github.io/docker-sftp/docs/reference/users-conf/).
 
-**Note:** The time when this image was last built can delay the availability of an OpenSSH release. Since this is an automated build linked with [phusion/baseimage](https://hub.docker.com/r/phusion/baseimage/), the build will depend on how often they push changes (out of my control). You can of course make this more predictable by cloning this repo and run your own build manually.
+## Settings
 
-# Building the container yourself
-To build this container, clone the repository and cd into it.
+<details>
+<summary><b>Environment variables</b></summary>
 
-## Build it:
-```
-$ cd /repo/location/sftp
-$ docker build -t sftp .
-```
-## Run it:
-```
-$ docker run \
-    -v /host/config/path:/config \
-    -p 22:22 -d markusmcnugen/sftp \
-    user:pass:::upload
+| Variable | Default | Effect |
+|---|---|---|
+| `SFTP_USERS` | | Space-separated account lines |
+| `SFTP_USERS_FILE` | | A file of account lines, such as a Docker secret |
+| `SFTP_PORT` | `22` | Port sshd listens on inside the container |
+| `SFTP_LOG_TRANSFERS` | `false` | Log every file operation |
+| `SFTP_UMASK` | `022` | Umask for uploaded files, such as `002` for group-writable |
+| `SFTP_CRYPTO_POLICY` | `modern` | `strict` accepts encrypt-then-MAC MACs only |
+| `SFTP_AUTH_LOG_MAX_BYTES` | `10485760` | Size at which the internal auth log rotates; `0` for no cap |
+| `FAIL2BAN_ENABLED` | `true` | `false` runs without fail2ban |
+| `TZ` | `UTC` | Time zone for log timestamps |
+
+</details>
+
+sshd settings go in `/config/sshd/sshd_config.d/*.conf` and fail2ban settings in `/config/fail2ban/jail.local`. The [Environment Variables](https://markusmcnugen.github.io/docker-sftp/docs/reference/environment-variables/) and [/config Volume](https://markusmcnugen.github.io/docker-sftp/docs/reference/config-volume/) references list every value and path.
+
+## Security
+
+- fail2ban bans by adding firewall rules inside the container's network namespace, which needs `NET_ADMIN` and `NET_RAW`. Without them it detects attacks but cannot block them, and the log says so at start.
+- Bans need the client's real address. Docker's port publishing keeps it; a reverse proxy, a load balancer or Docker's userland proxy replaces it with its own, and one attacker then gets everyone banned.
+- The `modern` crypto policy keeps plain `hmac-sha2-256` and `hmac-sha2-512` last in the list of MACs (message authentication codes, which detect tampering) for clients without encrypt-then-MAC, such as paramiko. `SFTP_CRYPTO_POLICY=strict` removes them.
+- Anyone who can write `/config` controls the accounts and runs startup scripts as root.
+
+[Security Model](https://markusmcnugen.github.io/docker-sftp/docs/explanation/security-model/) covers each measure and its limits.
+
+## Upgrading from 1.x
+
+Point the image at the existing `/config`. `users.conf`, host keys, user keys and the ban database are read as they are. An untouched 1.x `sshd_config` or `jail.conf` is renamed `*.legacy` and the hardened defaults apply; an edited one is still used, with a warning. Add `NET_ADMIN` and `NET_RAW`. [How To Upgrade From 1.x](https://markusmcnugen.github.io/docker-sftp/docs/how-to/upgrade-from-1x/) lists what to move by hand.
+
+## Repository layout
+
+| Path | Role |
+|---|---|
+| `Dockerfile` | the image: Debian 13 slim, OpenSSH, fail2ban, rsyslog, tini |
+| `rootfs/usr/local/bin/entrypoint` | builds the configuration from `/config` and supervises the services |
+| `rootfs/usr/local/bin/healthcheck` | the container health check |
+| `rootfs/etc/ssh/sshd_config` | the built-in sshd configuration |
+| `rootfs/etc/fail2ban/` | the built-in jail and server settings |
+| `rootfs/etc/rsyslog.conf` | log routing to the container log and the auth log |
+| `rootfs/usr/local/lib/sftp/legacy-defaults.sha256` | hashes of the 1.x default files, for upgrades |
+| `tests/run-tests.sh` | the integration suite |
+| `tests/fixtures/legacy-1.x/` | the 1.x default `sshd_config` and `jail.conf` |
+| `wiki/` | the Hugo site with the tutorial, how-to guides, explanations and reference |
+| `.github/workflows/` | the release build and the wiki deployment |
+| `compose.yaml` | a hardened deployment example |
+| `CHANGELOG.md` | what changed in each version |
+
+## Building and testing
+
+```bash
+docker build -t sftp .
+tests/run-tests.sh sftp                     # ENGINE=podman for Podman
+SCENARIOS="main options" tests/run-tests.sh sftp
 ```
 
-This will start a container as described in the "Run container from Docker registry" section
+The suite starts real servers on a private network and drives them with OpenSSH clients from other containers: password, hash and key logins, the jail, refused shells, forwarding and weak crypto, transfer logs, bans, log rotation, reconciliation across a restart, the minimal capability set, 1.x migration, and refused configurations. [How To Build And Test The Image](https://markusmcnugen.github.io/docker-sftp/docs/how-to/build-and-test/) describes each scenario.
 
-## Using Docker Compose:
-```
-sftp:
-    image: markusmcnugen/sftp
-    volumes:
-        - /host/upload:/home/user/upload
-    ports:
-        - "22:22"
-    command: user:pass:::upload
-```
+`.github/workflows/release.yml` runs on a `v*` tag, every week, and by hand. It lints, runs the suite on a native x86 runner and a native arm64 runner, scans with Trivy, and publishes to Docker Hub and GHCR with an SBOM and provenance.
+
+## Platforms
+
+- **Images:** `linux/amd64` and `linux/arm64`, each tested on its own architecture before it is published.
+- **Hosts:** the suite passes on Ubuntu 24.04 x86-64 with rootless Podman 4.9.3, apart from transfer logging there, which the host's AppArmor profile for rsyslogd blocks and the image reports at start. Docker gives every container its own AppArmor profile and Unraid has no AppArmor, so neither should block it; the release workflow runs the suite under Docker on both architectures.
+- **Clients:** checked against OpenSSH 10, OpenSSH for Windows 9.5 and paramiko 5.0.
+
+## Wiki
+
+The documentation site is at **[markusmcnugen.github.io/docker-sftp](https://markusmcnugen.github.io/docker-sftp/)**, built from [`wiki/`](https://github.com/MarkusMcNugen/docker-sftp/tree/main/wiki) by `.github/workflows/wiki-deploy.yml` on every push to main. It is a Hugo site using the Hextra theme, organized by the Diataxis framework:
+
+- a tutorial that builds a first server, from an empty folder to key logins and a ban;
+- twelve how-to guides: users, hashed passwords, public keys, shared folders, sshd settings, fail2ban, transfer logs, hardening, Unraid, upgrading from 1.x, building and testing, and fixing failures;
+- two explanations: how the container works, and the security model;
+- six reference pages: environment variables, users.conf, the /config volume, commands, built-in settings, and log messages.
+
+## Credits and influences
+
+- **[atmoz/sftp](https://github.com/atmoz/sftp)**, which this project was forked from, set the account line format that `users.conf` still uses.
+- **[OpenSSH](https://www.openssh.com/)** provides the server, the chroot and `internal-sftp`; **[fail2ban](https://github.com/fail2ban/fail2ban)** the bans; **[rsyslog](https://www.rsyslog.com/)** the log routing; **[tini](https://github.com/krallin/tini)** process 1.
+- **[ssh-audit](https://github.com/jtesta/ssh-audit)**'s hardening guides shaped the crypto policy.
+- **[Hextra](https://github.com/imfing/hextra)** is the wiki's theme.
+
+## Use of AI tools
+
+The author used Claude (Anthropic) via the Claude Code CLI for code development assistance, documentation drafting, and test scripting during the preparation of this repository. All design decisions and the final content were determined by the author. The image, the entrypoint and the documentation were verified by the integration suite, shellcheck, hadolint and actionlint, and by logins from real SFTP clients.
+
+## License
+
+MIT, see [LICENSE.txt](https://github.com/MarkusMcNugen/docker-sftp/blob/main/LICENSE.txt).
+
+## Contributing
+
+Issues and pull requests are welcome at [github.com/MarkusMcNugen/docker-sftp](https://github.com/MarkusMcNugen/docker-sftp). A change to the entrypoint comes with a check in `tests/run-tests.sh` that fails without it.

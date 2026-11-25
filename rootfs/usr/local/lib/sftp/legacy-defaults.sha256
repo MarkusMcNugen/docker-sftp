@@ -1,0 +1,13 @@
+# SHA-256 of every default config that 1.x images copied into /config.
+# A file in /config that matches one of these was never edited by its
+# owner, so the entrypoint can retire it safely; anything else is a
+# customization and is honored.
+#
+# <sha256> <file name in /config>
+a6375638d5059ecdcd61372a02b41902020ce7b3724af1fa3d09af6455f1c918 sshd_config
+8d52e9bbdfed32f981c9a4dfed2a430b16621290004e27fefe8edab61ae508bd sshd_config
+84d4e62246eb29aedb140cead680a7c3c04fc35f7880b0f710885759de745212 sshd_config
+11a44944b8a029ad9a3a33f94f78e5ecb2867f8ae04e631e2bce23af42d23326 sshd_config
+d0db0511bdc147a903bfad7bf43954ed8d6f6ddbbb6beec1cbf1b4821b4b1da2 jail.conf
+aa3f7d00effd8c423df0fcaadd7c81c4b05d5cc769ccf6841a0ae72c0606a73a jail.conf
+38f188f693dab25e0483d9f71f227410ea10bc2c3b94bc9df3d5ead59b218350 jail.conf

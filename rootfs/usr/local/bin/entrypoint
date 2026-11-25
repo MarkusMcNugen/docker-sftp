@@ -1,0 +1,707 @@
+#!/usr/bin/env bash
+# Container entrypoint: OpenSSH restricted to file transfer, guarded by
+# fail2ban.
+#
+# Builds the sshd, fail2ban and account configuration from /config and the
+# environment, then supervises rsyslogd, fail2ban and sshd. If any of them
+# exits, the others are stopped and the container exits non-zero, so the
+# restart policy brings back a whole, consistent server.
+#
+# Arguments shaped like a user spec (name:password[...]) are added to the
+# user list. Any other command runs in place of the server.
+
+set -Eeuo pipefail
+shopt -s nullglob
+umask 022
+
+readonly CONFIG=/config
+readonly SSHD_DIR=$CONFIG/sshd
+readonly F2B_DIR=$CONFIG/fail2ban
+readonly HOST_KEY_DIR=$SSHD_DIR/keys
+readonly USER_KEY_DIR=$CONFIG/userkeys
+readonly USERS_CONF=$SSHD_DIR/users.conf
+readonly USERS_CONF_LEGACY=/etc/sftp-users.conf
+readonly AUTH_KEYS_DIR=/etc/ssh/authorized_keys
+readonly DIST=/usr/local/share/sftp
+readonly LEGACY_HASHES=/usr/local/lib/sftp/legacy-defaults.sha256
+readonly RUN_DIR=/run/sftp
+readonly AUTH_LOG=/var/log/auth.log
+readonly SFTP_GROUP=sftpusers
+readonly MANAGED_COMMENT=sftp-managed
+readonly DEFAULT_GID=100
+readonly STRICT_MACS=hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,umac-128-etm@openssh.com
+
+readonly RE_USER='^[A-Za-z0-9._][A-Za-z0-9._-]{0,31}$'
+readonly RE_SPEC_HINT='^[^:[:space:]]+:'
+readonly RE_SKIP='^[[:space:]]*(#.*)?$'
+
+FAIL2BAN_ENABLED=${FAIL2BAN_ENABLED:-true}
+SFTP_LOG_TRANSFERS=${SFTP_LOG_TRANSFERS:-false}
+SFTP_UMASK=${SFTP_UMASK:-}
+SFTP_PORT=${SFTP_PORT:-}
+SFTP_USERS=${SFTP_USERS:-}
+SFTP_USERS_FILE=${SFTP_USERS_FILE:-}
+SFTP_CRYPTO_POLICY=${SFTP_CRYPTO_POLICY:-modern}
+# rsyslog.conf reads this from the environment; 0 means no cap.
+SFTP_AUTH_LOG_MAX_BYTES=${SFTP_AUTH_LOG_MAX_BYTES:-10485760}
+
+SPECS=()           # raw user specs, in the order they were found
+USERS=()           # validated account names, first definition wins
+declare -A U_PASS U_ENC U_UID U_GID U_DIRS
+SSHD_OPTS=()       # -o options derived from the environment
+SSHD_LEGACY=false  # true when /config/sshd/sshd_config replaces ours
+LOG_SOCKETS=()     # per-chroot syslog sockets rsyslog is asked to create
+PIDS=()
+declare -A PROC_NAME REAPED
+STOPPING=false
+
+log() {
+    local now
+    printf -v now '%(%Y-%m-%dT%H:%M:%S%z)T' -1
+    printf '%s entrypoint: %s\n' "$now" "$*"
+}
+info() { log "$*"; }
+warn() { log "warning: $*" >&2; }
+die() {
+    log "fatal: $*" >&2
+    exit 1
+}
+# Subshells (command substitutions, background jobs) report through their
+# caller, so only the main shell names the failing line.
+trap '((BASH_SUBSHELL)) || die "command failed at line $LINENO: $BASH_COMMAND"' ERR
+
+is_true() {
+    case "${1,,}" in
+        1 | true | yes | on) return 0 ;;
+        0 | false | no | off | "") return 1 ;;
+        *) die "expected true or false, got \"$1\"" ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# Image-owned configuration is restored on every start, so a restarted
+# container never keeps a file that has since been removed from /config.
+# ---------------------------------------------------------------------------
+restore_image_configs() {
+    cp -f "$DIST/sshd_config" /etc/ssh/sshd_config
+    rm -rf /etc/ssh/sshd_config.d "$AUTH_KEYS_DIR" /etc/fail2ban /etc/rsyslog.d "$RUN_DIR"
+    install -d -m 755 /etc/ssh/sshd_config.d "$AUTH_KEYS_DIR" /etc/rsyslog.d "$RUN_DIR" /run/sshd
+    cp -a "$DIST/fail2ban" /etc/fail2ban
+    mkdir -p "$SSHD_DIR/sshd_config.d" "$HOST_KEY_DIR" "$USER_KEY_DIR"
+    : >"$AUTH_LOG"
+}
+
+# Files that 1.x images copied into /config. One whose hash is listed in
+# $LEGACY_HASHES is an untouched default and is renamed out of the way.
+is_legacy_default() {
+    local file=$1 name=$2 sum
+    sum=$(sha256sum -- "$file")
+    sum=${sum%% *}
+    grep -qE "^${sum} ${name}$" "$LEGACY_HASHES"
+}
+
+retire() {
+    local file=$1 target=$1.legacy
+    [[ -e $target ]] && target=$file.legacy.$(date +%Y%m%d%H%M%S)
+    mv -- "$file" "$target"
+    info "renamed $file to $target"
+}
+
+# ---------------------------------------------------------------------------
+# Users
+# ---------------------------------------------------------------------------
+add_specs_from_file() {
+    local file=$1 line
+    while IFS= read -r line || [[ -n $line ]]; do
+        line=${line%"${line##*[![:space:]]}"}
+        [[ $line =~ $RE_SKIP ]] && continue
+        SPECS+=("$line")
+    done <"$file"
+}
+
+collect_specs() {
+    [[ -f $USERS_CONF_LEGACY ]] && add_specs_from_file "$USERS_CONF_LEGACY"
+    [[ -f $USERS_CONF ]] && add_specs_from_file "$USERS_CONF"
+    if [[ -n $SFTP_USERS_FILE ]]; then
+        [[ -r $SFTP_USERS_FILE ]] || die "SFTP_USERS_FILE=$SFTP_USERS_FILE is not readable"
+        add_specs_from_file "$SFTP_USERS_FILE"
+    fi
+    local arg
+    for arg in "$@"; do SPECS+=("$arg"); done
+    local -a from_env=()
+    read -r -a from_env <<<"$SFTP_USERS"
+    SPECS+=("${from_env[@]}")
+}
+
+# Empty, or a decimal id from 1 to 2^32-2. Leading zeros are decimal too.
+valid_id() {
+    [[ -z $1 ]] && return 0
+    [[ $1 =~ ^[0-9]{1,10}$ ]] && ((10#$1 > 0 && 10#$1 < 4294967295))
+}
+
+# name:password[:e][:uid[:gid[:dir1,dir2,...]]]
+# The password never appears in a message: only the name is quoted.
+parse_spec() {
+    local spec=$1 i=2 enc=""
+    local -a f=()
+    IFS=: read -r -a f <<<"$spec"
+    local name=${f[0]:-} pass=${f[1]:-}
+
+    [[ $name =~ $RE_USER ]] || die "invalid user name \"$name\" (POSIX names, at most 32 characters)"
+    [[ $spec == *:* ]] || die "user \"$name\": expected name:password[:e][:uid[:gid[:dirs]]]"
+    local entry comment
+    if entry=$(getent passwd "$name"); then
+        IFS=: read -r _ _ _ _ comment _ <<<"$entry"
+        [[ $comment == "$MANAGED_COMMENT" ]] ||
+            die "user \"$name\" is a system account of the image; choose another name"
+    fi
+    if [[ ${f[2]:-} == e ]]; then
+        enc=1
+        i=3
+    fi
+    local uid=${f[i]:-} gid=${f[i + 1]:-} dirs=${f[i + 2]:-}
+    ((${#f[@]} <= i + 3)) || die "user \"$name\": too many fields"
+    ((${#pass} <= 255)) || die "user \"$name\": password longer than 255 characters"
+    valid_id "$uid" || die "user \"$name\": uid \"$uid\" must be a number from 1 to 4294967294 (0 is root)"
+    valid_id "$gid" || die "user \"$name\": gid \"$gid\" must be a number from 1 to 4294967294 (0 is root)"
+    [[ -n $uid ]] && uid=$((10#$uid))
+    [[ -n $gid ]] && gid=$((10#$gid))
+    if [[ -n $enc && -n $pass && $pass != \$* ]]; then
+        warn "user \"$name\": the password is marked :e but does not look like a crypt hash"
+    fi
+
+    local -a parts=()
+    local d c
+    IFS=, read -r -a parts <<<"$dirs"
+    for d in "${parts[@]}"; do
+        [[ -n $d ]] || continue
+        [[ $d != /* ]] || die "user \"$name\": directory \"$d\" must be relative to the home directory"
+        local -a comps=()
+        IFS=/ read -r -a comps <<<"$d"
+        for c in "${comps[@]}"; do
+            [[ $c != . && $c != .. ]] || die "user \"$name\": directory \"$d\" may not contain . or .."
+        done
+    done
+
+    if [[ -n ${U_PASS[$name]+set} ]]; then
+        warn "user \"$name\" is defined more than once; keeping the first definition"
+        return 0
+    fi
+    USERS+=("$name")
+    U_PASS[$name]=$pass
+    U_ENC[$name]=$enc
+    U_UID[$name]=$uid
+    U_GID[$name]=$gid
+    U_DIRS[$name]=$dirs
+}
+
+ensure_group() {
+    local gid=$1
+    getent group "$gid" >/dev/null || groupadd --gid "$gid" "group_$gid"
+}
+
+apply_account() {
+    local name=$1 uid=${U_UID[$1]} gid=${U_GID[$1]:-$DEFAULT_GID}
+    ensure_group "$gid"
+    if getent passwd "$name" >/dev/null; then
+        if [[ -n $uid && $(id -u "$name") != "$uid" ]]; then
+            usermod --non-unique --uid "$uid" "$name"
+            info "user $name: uid changed to $uid"
+        fi
+        if [[ $(id -g "$name") != "$gid" ]]; then
+            usermod --gid "$gid" "$name"
+            info "user $name: primary group changed to $gid"
+        fi
+        usermod --append --groups "$SFTP_GROUP" "$name"
+    else
+        local -a args=(--no-create-home --home-dir "/home/$name" --shell /usr/sbin/nologin
+            --comment "$MANAGED_COMMENT" --no-user-group --gid "$gid" --groups "$SFTP_GROUP")
+        [[ -n $uid ]] && args+=(--non-unique --uid "$uid")
+        useradd "${args[@]}" "$name"
+        info "user $name: created (uid $(id -u "$name"), gid $gid)"
+    fi
+
+    local pass=${U_PASS[$name]}
+    if [[ -z $pass ]]; then
+        usermod --password '*' "$name"
+    elif [[ -n ${U_ENC[$name]} ]]; then
+        printf '%s:%s\n' "$name" "$pass" | chpasswd --encrypted
+    else
+        printf '%s:%s\n' "$name" "$pass" | chpasswd
+    fi
+}
+
+# ChrootDirectory requires a root-owned home that nobody else can write to.
+apply_home() {
+    local name=$1 home=/home/$1 owner mode
+    [[ -L $home ]] && die "$home is a symbolic link; sshd cannot chroot into it"
+    mkdir -p -- "$home"
+    read -r owner mode < <(stat -c '%u:%g %a' -- "$home")
+    if [[ $owner != 0:0 ]]; then
+        chown root:root -- "$home"
+        warn "user $name: $home was owned by $owner; changed to root:root, which the chroot requires"
+    fi
+    if ((8#$mode & 8#022)); then
+        chmod go-w -- "$home"
+        warn "user $name: removed group/other write permission from $home, which the chroot requires"
+    fi
+}
+
+# Every component is created one level at a time and only when missing, so
+# an existing (possibly bind-mounted) directory is never re-owned, and a
+# symbolic link planted by a user can never redirect the root-run mkdir.
+apply_dirs() {
+    local name=$1 uid gid d c path
+    uid=$(id -u "$name")
+    gid=$(id -g "$name")
+    local -a parts=()
+    IFS=, read -r -a parts <<<"${U_DIRS[$name]}"
+    for d in "${parts[@]}"; do
+        [[ -n $d ]] || continue
+        path=/home/$name
+        local -a comps=()
+        IFS=/ read -r -a comps <<<"$d"
+        for c in "${comps[@]}"; do
+            [[ -n $c ]] || continue
+            path+=/$c
+            if [[ -L $path ]]; then
+                warn "user $name: $path is a symbolic link; not creating anything beneath it"
+                continue 2
+            elif [[ ! -e $path ]]; then
+                mkdir -- "$path"
+                chown "$uid:$gid" -- "$path"
+                info "user $name: created $path"
+            elif [[ ! -d $path ]]; then
+                die "user $name: $path exists and is not a directory"
+            fi
+        done
+    done
+}
+
+# Keys come from /config/userkeys/<name>.pub and /config/userkeys/<name>/*.pub
+# and are installed root-owned outside the chroot.
+apply_keys() {
+    local name=$1 dest=$AUTH_KEYS_DIR/$1 tmp src fp
+    local -a sources=()
+    [[ -f $USER_KEY_DIR/$name.pub ]] && sources+=("$USER_KEY_DIR/$name.pub")
+    sources+=("$USER_KEY_DIR/$name"/*.pub)
+    if ((${#sources[@]} == 0)); then
+        [[ -n ${U_PASS[$name]} ]] ||
+            warn "user $name has no password and no key in $USER_KEY_DIR, so cannot log in"
+        return 0
+    fi
+
+    tmp=$(mktemp "$AUTH_KEYS_DIR/.$name.XXXXXX")
+    # CR endings are stripped (files edited on Windows) and every file ends
+    # in a newline, so two files never fuse into one line.
+    for src in "${sources[@]}"; do
+        awk '{ sub(/\r$/, ""); print }' "$src" >>"$tmp"
+    done
+    chmod 644 "$tmp"
+    mv -f -- "$tmp" "$dest"
+
+    local -a prints=()
+    # ssh-keygen's own complaint about a malformed line is replaced by the
+    # warning below, which names the files the key was read from.
+    mapfile -t prints < <(ssh-keygen -l -f "$dest" 2>/dev/null)
+    if ((${#prints[@]})); then
+        for fp in "${prints[@]}"; do info "user $name: key $fp"; done
+    else
+        warn "user $name: no valid public key in ${sources[*]}"
+    fi
+}
+
+remove_stale_accounts() {
+    local name comment
+    local -A wanted=()
+    for name in "${USERS[@]}"; do wanted[$name]=1; done
+    while IFS=: read -r name _ _ _ comment _; do
+        [[ $comment == "$MANAGED_COMMENT" && -z ${wanted[$name]:-} ]] || continue
+        userdel "$name"
+        info "user $name: removed (no longer configured); /home/$name is kept"
+    done < <(getent passwd)
+}
+
+# Every spec is validated before anything is created, so a mistake costs no
+# host key, account or directory.
+parse_specs() {
+    local spec
+    for spec in "${SPECS[@]}"; do parse_spec "$spec"; done
+}
+
+setup_users() {
+    local name
+    remove_stale_accounts
+    for name in "${USERS[@]}"; do
+        apply_account "$name"
+        apply_home "$name"
+        apply_dirs "$name"
+        apply_keys "$name"
+    done
+    info "accounts configured: ${#USERS[@]}"
+}
+
+write_users_template() {
+    [[ -e $USERS_CONF ]] && return 0
+    cat >"$USERS_CONF" <<'EOF'
+# Accounts, one per line:
+#
+#   name:password[:e][:uid[:gid[:dir1,dir2,...]]]
+#
+# alice:changeme:1001:100:upload       password login, one writable directory
+# bob::1002:100:inbox,outbox            no password: public-key login only
+# carol:$y$j9T$...:e:1003               hashed password (see the README)
+#
+# Public keys go in /config/userkeys/<name>.pub or /config/userkeys/<name>/*.pub
+EOF
+}
+
+# ---------------------------------------------------------------------------
+# Host keys
+# ---------------------------------------------------------------------------
+setup_host_keys() {
+    local type key
+    for type in ed25519 rsa; do
+        key=$HOST_KEY_DIR/ssh_host_${type}_key
+        if [[ ! -s $key ]]; then
+            info "generating $type host key in $HOST_KEY_DIR"
+            rm -f -- "$key" "$key.pub"
+            if [[ $type == rsa ]]; then
+                ssh-keygen -q -t rsa -b 4096 -N '' -C sftp-host-key -f "$key"
+            else
+                ssh-keygen -q -t "$type" -N '' -C sftp-host-key -f "$key"
+            fi
+        fi
+        [[ -s $key.pub ]] || ssh-keygen -y -f "$key" >"$key.pub"
+        chmod 600 -- "$key" || warn "cannot restrict $key to mode 600; sshd may refuse it"
+        info "host key: $(ssh-keygen -l -f "$key.pub")"
+    done
+}
+
+# ---------------------------------------------------------------------------
+# sshd
+# ---------------------------------------------------------------------------
+# Validates the environment and turns it into sshd -o options. Changes no
+# file, so a bad value stops the container before anything is touched.
+sshd_options_from_env() {
+    local var
+    for var in FAIL2BAN_ENABLED SFTP_LOG_TRANSFERS; do
+        case "${!var,,}" in
+            1 | true | yes | on | 0 | false | no | off | "") ;;
+            *) die "$var=${!var} must be true or false" ;;
+        esac
+    done
+    if [[ -n $SFTP_PORT ]]; then
+        if [[ ! $SFTP_PORT =~ ^[0-9]{1,5}$ ]] || ((10#$SFTP_PORT < 1 || 10#$SFTP_PORT > 65535)); then
+            die "SFTP_PORT=$SFTP_PORT is not a port number"
+        fi
+        SSHD_OPTS+=(-o "Port=$((10#$SFTP_PORT))")
+    fi
+    local force=internal-sftp
+    is_true "$SFTP_LOG_TRANSFERS" && force+=" -l info"
+    if [[ -n $SFTP_UMASK ]]; then
+        [[ $SFTP_UMASK =~ ^0?[0-7]{3}$ ]] || die "SFTP_UMASK=$SFTP_UMASK is not an octal umask such as 022"
+        force+=" -u $SFTP_UMASK"
+    fi
+    [[ $force == internal-sftp ]] || SSHD_OPTS+=(-o "ForceCommand=$force")
+    # modern keeps plain hmac-sha2-256/512 for clients without
+    # encrypt-then-MAC support; strict accepts encrypt-then-MAC only.
+    case "${SFTP_CRYPTO_POLICY,,}" in
+        modern) ;;
+        strict) SSHD_OPTS+=(-o "MACs=$STRICT_MACS") ;;
+        *) die "SFTP_CRYPTO_POLICY=$SFTP_CRYPTO_POLICY must be modern or strict" ;;
+    esac
+}
+
+setup_sshd() {
+    local custom=$SSHD_DIR/sshd_config f
+    if [[ -f $custom ]]; then
+        if is_legacy_default "$custom" sshd_config; then
+            info "$custom is an unmodified 1.x default; the built-in configuration replaces it"
+            retire "$custom"
+        else
+            SSHD_LEGACY=true
+            install -m 644 -o root -g root -- "$custom" /etc/ssh/sshd_config
+            warn "$custom replaces the whole built-in sshd configuration, so its hardening and sshd_config.d drop-ins do not apply"
+        fi
+    fi
+    if ! $SSHD_LEGACY; then
+        for f in "$SSHD_DIR"/sshd_config.d/*.conf; do
+            install -m 644 -o root -g root -- "$f" /etc/ssh/sshd_config.d/
+            info "sshd drop-in: $f"
+        done
+    fi
+    if $SSHD_LEGACY && ! grep -qiE '^[[:space:]]*AuthorizedKeysFile' /etc/ssh/sshd_config; then
+        SSHD_OPTS+=(-o "AuthorizedKeysFile=$AUTH_KEYS_DIR/%u .ssh/authorized_keys")
+    fi
+}
+
+validate_sshd() {
+    local out
+    out=$(/usr/sbin/sshd -t "${SSHD_OPTS[@]}" 2>&1) || die "sshd rejected its configuration: $out"
+    [[ -z $out ]] || warn "sshd: $out"
+    /usr/sbin/sshd -T "${SSHD_OPTS[@]}" | awk '$1 == "port" { print $2 }' | sort -un >"$RUN_DIR/ports"
+    info "sshd will listen on port(s): $(paste -sd, "$RUN_DIR/ports")"
+}
+
+setup_auth_log() {
+    [[ $SFTP_AUTH_LOG_MAX_BYTES =~ ^[0-9]{1,15}$ ]] ||
+        die "SFTP_AUTH_LOG_MAX_BYTES=$SFTP_AUTH_LOG_MAX_BYTES is not a byte count (0 means no cap)"
+    export SFTP_AUTH_LOG_MAX_BYTES=$((10#$SFTP_AUTH_LOG_MAX_BYTES))
+}
+
+# A chrooted internal-sftp can only reach a syslog socket inside its chroot,
+# so transfer logging needs /home/<name>/dev/log for every user.
+setup_transfer_logging() {
+    is_true "$SFTP_LOG_TRANSFERS" || return 0
+    local name dir conf=/etc/rsyslog.d/sftp-chroots.conf
+    : >"$conf"
+    for name in "${USERS[@]}"; do
+        dir=/home/$name/dev
+        if [[ -L $dir ]] || { [[ -e $dir ]] && [[ $(stat -c %u -- "$dir") != 0 ]]; }; then
+            warn "user $name: $dir is not a root-owned directory; transfers of this user are not logged"
+            continue
+        fi
+        install -d -m 755 -o root -g root -- "$dir"
+        # A socket left by the previous start would pass check_log_sockets
+        # whether or not rsyslog can listen on it now.
+        rm -f -- "$dir/log"
+        printf 'input(type="imuxsock" Socket="%s/log" CreatePath="off" RateLimit.Interval="0")\n' "$dir" >>"$conf"
+        LOG_SOCKETS+=("$dir/log")
+    done
+    info "transfer logging is on"
+}
+
+# rsyslog reports a socket it cannot create only in its own log, so each
+# one is checked here and its chroot named. rsyslog opens them all at
+# start-up, so they share one two-second deadline.
+check_log_sockets() {
+    ((${#LOG_SOCKETS[@]})) || return 0
+    local sock tries=20
+    local -a missing=()
+    while :; do
+        missing=()
+        for sock in "${LOG_SOCKETS[@]}"; do
+            [[ -S $sock ]] || missing+=("$sock")
+        done
+        ((${#missing[@]} == 0 || --tries == 0)) && break
+        sleep 0.1
+    done
+    for sock in "${missing[@]}"; do
+        warn "rsyslogd did not create $sock, so transfers in that chroot are not logged." \
+            "A host AppArmor or SELinux policy for rsyslogd can cause this; see the README."
+    done
+}
+
+# ---------------------------------------------------------------------------
+# fail2ban
+# ---------------------------------------------------------------------------
+# A throwaway chain proves the backend can write rules, not just list them.
+# The probe's own error output is not useful; select_firewall explains.
+probe_iptables() {
+    local bin=$1 chain=sftp-probe-$$
+    "$bin" -w -N "$chain" >/dev/null 2>&1 || return 1
+    "$bin" -w -X "$chain" >/dev/null 2>&1
+}
+
+select_firewall() {
+    local backend
+    for backend in nft legacy; do
+        if probe_iptables "iptables-$backend"; then
+            update-alternatives --quiet --set iptables "/usr/sbin/iptables-$backend"
+            update-alternatives --quiet --set ip6tables "/usr/sbin/ip6tables-$backend"
+            info "fail2ban bans with iptables ($backend backend)"
+            return 0
+        fi
+    done
+    warn "fail2ban cannot change firewall rules, so attackers are detected but never blocked." \
+        "Start the container with --cap-add=NET_ADMIN --cap-add=NET_RAW."
+}
+
+setup_fail2ban() {
+    if ! is_true "$FAIL2BAN_ENABLED"; then
+        info "fail2ban is disabled (FAIL2BAN_ENABLED=$FAIL2BAN_ENABLED)"
+        return 0
+    fi
+    mkdir -p "$F2B_DIR/jail.d" "$F2B_DIR/filter.d" "$F2B_DIR/action.d"
+    install -d -m 755 /run/fail2ban
+
+    if [[ -f $F2B_DIR/fail2ban.conf ]]; then
+        warn "$F2B_DIR/fail2ban.conf was written by a 1.x image and is no longer read; put settings in $F2B_DIR/fail2ban.local"
+        retire "$F2B_DIR/fail2ban.conf"
+    fi
+    if [[ -f $F2B_DIR/jail.conf ]]; then
+        if is_legacy_default "$F2B_DIR/jail.conf" jail.conf; then
+            info "$F2B_DIR/jail.conf is an unmodified 1.x default; the built-in jail replaces it"
+            retire "$F2B_DIR/jail.conf"
+        else
+            install -m 644 -- "$F2B_DIR/jail.conf" /etc/fail2ban/jail.conf
+            warn "$F2B_DIR/jail.conf replaces the packaged jail.conf; prefer $F2B_DIR/jail.local for overrides"
+        fi
+    fi
+
+    local f sub
+    for f in "$F2B_DIR/jail.local" "$F2B_DIR/fail2ban.local"; do
+        [[ -f $f ]] || continue
+        install -m 644 -- "$f" /etc/fail2ban/
+        info "fail2ban override: $f"
+    done
+    for sub in jail.d filter.d action.d; do
+        for f in "$F2B_DIR/$sub"/*.conf "$F2B_DIR/$sub"/*.local; do
+            install -m 644 -- "$f" "/etc/fail2ban/$sub/"
+            info "fail2ban override: $f"
+        done
+    done
+
+    local out
+    out=$(fail2ban-client --test 2>&1) || die "fail2ban rejected its configuration: $out"
+    select_firewall
+    touch "$RUN_DIR/fail2ban-enabled"
+}
+
+# ---------------------------------------------------------------------------
+# Custom scripts, run as root after the accounts exist
+# ---------------------------------------------------------------------------
+run_custom_scripts() {
+    local f status
+    for f in "$SSHD_DIR"/scripts/*; do
+        [[ -f $f ]] || continue
+        if [[ -x $f ]]; then
+            info "running $f"
+            "$f" || { status=$?; die "$f failed with status $status"; }
+        elif [[ $f == *.sh ]]; then
+            info "running $f with bash (not executable)"
+            bash "$f" || { status=$?; die "$f failed with status $status"; }
+        else
+            warn "skipping $f: not executable and not a .sh file"
+        fi
+    done
+}
+
+# ---------------------------------------------------------------------------
+# Supervision
+# ---------------------------------------------------------------------------
+start_proc() {
+    local name=$1
+    shift
+    "$@" &
+    PIDS+=("$!")
+    PROC_NAME[$!]=$name
+}
+
+# Stops one supervised process. A process that is already gone has nothing
+# left to stop, so a failed kill is not an error.
+stop_proc() {
+    local pid=$1
+    [[ -n ${REAPED[$pid]:-} ]] && return 0
+    kill -TERM "$pid" 2>/dev/null || return 0
+    wait "$pid" || return 0
+}
+
+# sshd and fail2ban stop first, so rsyslog still records their shutdown.
+stop_all() {
+    local pid
+    for pid in "${PIDS[@]}"; do
+        [[ ${PROC_NAME[$pid]} == rsyslog ]] || stop_proc "$pid"
+    done
+    for pid in "${PIDS[@]}"; do
+        [[ ${PROC_NAME[$pid]} == rsyslog ]] && stop_proc "$pid"
+    done
+    return 0
+}
+
+# shellcheck disable=SC2317,SC2329 # called from the TERM and INT traps in supervise
+on_signal() {
+    $STOPPING && return 0
+    STOPPING=true
+    info "received SIG$1; stopping"
+}
+
+# Copies auth.log to auth.log.1 and truncates it in place once it reaches
+# SFTP_AUTH_LOG_MAX_BYTES. rsyslog appends (O_APPEND), so it carries on at
+# the new end without being signaled, which a host AppArmor profile for
+# rsyslogd can forbid. The size is read every five seconds, so the file can
+# pass the cap by what is logged in that time.
+# shellcheck disable=SC2317,SC2329 # started through start_proc in supervise
+rotate_auth_log() {
+    local size
+    while sleep 5; do
+        [[ -e $AUTH_LOG ]] || continue
+        size=$(stat -c %s -- "$AUTH_LOG") || continue
+        ((size >= SFTP_AUTH_LOG_MAX_BYTES)) || continue
+        cp -f -- "$AUTH_LOG" "$AUTH_LOG.1" || continue
+        : >"$AUTH_LOG" || continue
+    done
+}
+
+# Waits up to tries/10 seconds for a Unix socket to appear.
+wait_for_socket() {
+    local path=$1 tries=${2:-100}
+    until [[ -S $path ]]; do
+        ((--tries)) || return 1
+        sleep 0.1
+    done
+}
+
+supervise() {
+    trap 'on_signal TERM' TERM
+    trap 'on_signal INT' INT
+    trap - ERR
+
+    rm -f /dev/log /run/sshd.pid
+    start_proc rsyslog rsyslogd -n -iNONE -f /etc/rsyslog.conf
+    wait_for_socket /dev/log || die "rsyslogd did not create /dev/log"
+    check_log_sockets
+    if ((SFTP_AUTH_LOG_MAX_BYTES > 0)); then
+        start_proc auth-log-rotation rotate_auth_log
+    fi
+
+    if [[ -e $RUN_DIR/fail2ban-enabled ]]; then
+        rm -f /run/fail2ban/fail2ban.sock /run/fail2ban/fail2ban.pid
+        start_proc fail2ban fail2ban-server -f -x start
+    fi
+    start_proc sshd /usr/sbin/sshd -D "${SSHD_OPTS[@]}"
+    info "server started"
+
+    local exited status
+    while ! $STOPPING; do
+        exited=""
+        if wait -n -p exited "${PIDS[@]}"; then status=0; else status=$?; fi
+        $STOPPING && break
+        [[ -n $exited ]] || continue
+        REAPED[$exited]=1
+        warn "${PROC_NAME[$exited]} exited with status $status; stopping the container"
+        stop_all
+        exit $((status == 0 ? 1 : status))
+    done
+    stop_all
+    info "stopped"
+    exit 0
+}
+
+main() {
+    if (($#)) && [[ ! $1 =~ $RE_SPEC_HINT ]]; then
+        exec "$@"
+    fi
+
+    restore_image_configs
+    collect_specs "$@"
+    if ((${#SPECS[@]} == 0)); then
+        write_users_template
+        log "fatal: no users configured. Add them to $USERS_CONF, SFTP_USERS or the command line." >&2
+        exit 3
+    fi
+    parse_specs
+    setup_auth_log
+    sshd_options_from_env
+    setup_sshd
+    setup_host_keys
+    setup_users
+    run_custom_scripts
+    validate_sshd
+    setup_transfer_logging
+    setup_fail2ban
+    supervise
+}
+
+main "$@"

@@ -1,0 +1,80 @@
+# Builds the wiki (Hugo + Hextra) in wiki/ and deploys it to GitHub Pages.
+#
+# Every push to main rebuilds the site, with no paths filter, so the
+# published documentation always matches the branch.
+name: Deploy Wiki
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; a run queued behind the one in progress is
+# replaced by a newer one, and the run in progress always completes.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    env:
+      HUGO_VERSION: 0.170.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Setup Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: "1.27"
+          cache-dependency-path: wiki/go.sum
+      - name: Setup Pages
+        id: pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      # The package is checked against the SHA-256 the release's own
+      # checksums file lists before it is installed.
+      - name: Setup Hugo
+        working-directory: ${{ runner.temp }}
+        run: |
+          deb="hugo_extended_${HUGO_VERSION}_linux-amd64.deb"
+          base="https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}"
+          wget -q -O "$deb" "$base/$deb"
+          wget -q -O checksums.txt "$base/hugo_${HUGO_VERSION}_checksums.txt"
+          grep " $deb\$" checksums.txt | sha256sum --check --strict
+          sudo dpkg -i "$deb"
+          hugo version
+      - name: Build with Hugo
+        working-directory: ./wiki
+        env:
+          HUGO_ENVIRONMENT: production
+          HUGO_ENV: production
+        run: |
+          hugo \
+            --gc --minify \
+            --baseURL "${{ steps.pages.outputs.base_url }}/"
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: ./wiki/public
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-24.04
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
