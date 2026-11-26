@@ -15,6 +15,7 @@ Task-oriented recipes. Each page solves one concrete problem and assumes the bas
   {{< card link="change-sshd-settings/" title="How To Change sshd Settings" subtitle="Drop-in files, a read-only account, a different port, and the strict crypto policy." >}}
   {{< card link="tune-fail2ban/" title="How To Tune fail2ban" subtitle="Ban times, trusted addresses, unbanning, and your own filters." >}}
   {{< card link="log-transfers/" title="How To Log Transfers" subtitle="A log line for every upload, download, rename and delete." >}}
+  {{< card link="allow-rsync/" title="How To Allow rsync" subtitle="rsync over SSH for chosen accounts, inside their jails, and nothing else." >}}
   {{< card link="harden-the-container/" title="How To Harden The Container" subtitle="The minimal capability set, no-new-privileges, and log rotation." >}}
   {{< card link="run-on-unraid/" title="How To Run It On Unraid" subtitle="The template settings, the extra parameters, and appdata permissions." >}}
   {{< card link="upgrade-from-1x/" title="How To Upgrade From 1.x" subtitle="What happens to an existing /config, and what to move by hand." >}}

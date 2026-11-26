@@ -54,6 +54,7 @@ Each account is jailed in its home directory, fail2ban bans password guessers, a
 - [Accounts](https://markusmcnugen.github.io/docker-sftp/docs/how-to/add-users/) from a file, an environment variable, a Docker secret or the command line, with plain or [hashed passwords](https://markusmcnugen.github.io/docker-sftp/docs/how-to/use-hashed-passwords/).
 - Every start reconciles accounts: a changed password, a removed user or a revoked key takes effect on restart.
 - [Public keys](https://markusmcnugen.github.io/docker-sftp/docs/how-to/use-public-keys/) installed root-owned outside the jail, where users cannot add their own.
+- [rsync over SSH](https://markusmcnugen.github.io/docker-sftp/docs/how-to/allow-rsync/) for chosen accounts, inside their jails.
 - An optional [log of every file operation](https://markusmcnugen.github.io/docker-sftp/docs/how-to/log-transfers/).
 - A configuration mistake stops the container with one line naming it.
 - Exits when any service dies, stops in under a second, and reports its health.
@@ -91,7 +92,7 @@ Running `sshd` for file transfer alone takes a chroot that sshd will accept, key
 One line per account, in `/config/sshd/users.conf`:
 
 ```
-name:password[:e][:uid[:gid[:dir1,dir2,...]]]
+name:password[:e][:uid[:gid[:dir1,dir2,...[:rsync]]]]
 ```
 
 ```text
@@ -116,6 +117,7 @@ Bob has no password and logs in with the key in `/config/userkeys/bob.pub`. Caro
 | `SFTP_UMASK` | `022` | Umask for uploaded files, such as `002` for group-writable |
 | `SFTP_CRYPTO_POLICY` | `modern` | `strict` accepts encrypt-then-MAC MACs only |
 | `SFTP_AUTH_LOG_MAX_BYTES` | `10485760` | Size at which the internal auth log rotates; `0` for no cap |
+| `SFTP_RSYNC_USERS` | | Accounts allowed rsync over SSH, or `*` for all |
 | `FAIL2BAN_ENABLED` | `true` | `false` runs without fail2ban |
 | `TZ` | `UTC` | Time zone for log timestamps |
 
@@ -177,7 +179,7 @@ The suite starts real servers on a private network and drives them with OpenSSH 
 The documentation site is at **[markusmcnugen.github.io/docker-sftp](https://markusmcnugen.github.io/docker-sftp/)**, built from [`wiki/`](https://github.com/MarkusMcNugen/docker-sftp/tree/main/wiki) by `.github/workflows/wiki-deploy.yml` on every push to main. It is a Hugo site using the Hextra theme, organized by the Diataxis framework:
 
 - a tutorial that builds a first server, from an empty folder to key logins and a ban;
-- twelve how-to guides: users, hashed passwords, public keys, shared folders, sshd settings, fail2ban, transfer logs, hardening, Unraid, upgrading from 1.x, building and testing, and fixing failures;
+- thirteen how-to guides: users, hashed passwords, public keys, shared folders, sshd settings, fail2ban, transfer logs, rsync, hardening, Unraid, upgrading from 1.x, building and testing, and fixing failures;
 - two explanations: how the container works, and the security model;
 - six reference pages: environment variables, users.conf, the /config volume, commands, built-in settings, and log messages.
 

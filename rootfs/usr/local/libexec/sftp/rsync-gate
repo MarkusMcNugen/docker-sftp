@@ -1,0 +1,15 @@
+#!/bin/sh
+# Login shell of accounts allowed to use rsync. sshd runs it inside the
+# account's jail as `rsync-gate -c "<command>"`. Only an rsync server
+# command runs; it is split into words but never globbed or evaluated.
+set -f
+if [ "$#" -eq 2 ] && [ "$1" = "-c" ]; then
+    case "$2" in
+        "rsync --server "*)
+            # shellcheck disable=SC2086 # the words are rsync's arguments
+            exec $2
+            ;;
+    esac
+fi
+echo "This service allows sftp and rsync connections only." >&2
+exit 1

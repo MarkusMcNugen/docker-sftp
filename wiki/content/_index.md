@@ -34,6 +34,7 @@ A hardened OpenSSH SFTP server in one container. Every account is jailed in its 
 - [How To Change sshd Settings](docs/how-to/change-sshd-settings/) - drop-in files, a read-only account, another port, the strict crypto policy.
 - [How To Tune fail2ban](docs/how-to/tune-fail2ban/) - ban rules, trusted addresses, unbanning, your own filters.
 - [How To Log Transfers](docs/how-to/log-transfers/) - a log line for every upload, download, rename and delete.
+- [How To Allow rsync](docs/how-to/allow-rsync/) - rsync over SSH for chosen accounts, inside their jails.
 - [How To Harden The Container](docs/how-to/harden-the-container/) - the minimal capability set, no-new-privileges, log rotation.
 - [How To Run It On Unraid](docs/how-to/run-on-unraid/) - template settings, extra parameters, share permissions.
 - [How To Upgrade From 1.x](docs/how-to/upgrade-from-1x/) - what happens to an existing /config and what to move by hand.

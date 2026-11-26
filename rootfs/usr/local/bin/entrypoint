@@ -30,6 +30,9 @@ readonly SFTP_GROUP=sftpusers
 readonly MANAGED_COMMENT=sftp-managed
 readonly DEFAULT_GID=100
 readonly STRICT_MACS=hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com,umac-128-etm@openssh.com
+readonly RSYNC_GATE=/usr/local/libexec/sftp/rsync-gate
+readonly RSYNC_JAIL_FILES=(/bin/sh /usr/bin/rsync "$RSYNC_GATE")
+readonly RSYNC_STATE=/var/lib/sftp/rsync-jails
 
 readonly RE_USER='^[A-Za-z0-9._][A-Za-z0-9._-]{0,31}$'
 readonly RE_SPEC_HINT='^[^:[:space:]]+:'
@@ -44,10 +47,13 @@ SFTP_USERS_FILE=${SFTP_USERS_FILE:-}
 SFTP_CRYPTO_POLICY=${SFTP_CRYPTO_POLICY:-modern}
 # rsyslog.conf reads this from the environment; 0 means no cap.
 SFTP_AUTH_LOG_MAX_BYTES=${SFTP_AUTH_LOG_MAX_BYTES:-10485760}
+# Accounts allowed to use rsync, besides those whose line ends in :rsync.
+SFTP_RSYNC_USERS=${SFTP_RSYNC_USERS:-}
+SFTP_COMMAND=internal-sftp  # the server command of sftp sessions, with -l and -u
 
 SPECS=()           # raw user specs, in the order they were found
 USERS=()           # validated account names, first definition wins
-declare -A U_PASS U_ENC U_UID U_GID U_DIRS
+declare -A U_PASS U_ENC U_UID U_GID U_DIRS U_RSYNC
 SSHD_OPTS=()       # -o options derived from the environment
 SSHD_LEGACY=false  # true when /config/sshd/sshd_config replaces ours
 LOG_SOCKETS=()     # per-chroot syslog sockets rsyslog is asked to create
@@ -159,8 +165,9 @@ parse_spec() {
         enc=1
         i=3
     fi
-    local uid=${f[i]:-} gid=${f[i + 1]:-} dirs=${f[i + 2]:-}
-    ((${#f[@]} <= i + 3)) || die "user \"$name\": too many fields"
+    local uid=${f[i]:-} gid=${f[i + 1]:-} dirs=${f[i + 2]:-} rsync=${f[i + 3]:-}
+    ((${#f[@]} <= i + 4)) || die "user \"$name\": too many fields"
+    [[ -z $rsync || $rsync == rsync ]] || die "user \"$name\": the field after the directories must be rsync or empty"
     ((${#pass} <= 255)) || die "user \"$name\": password longer than 255 characters"
     valid_id "$uid" || die "user \"$name\": uid \"$uid\" must be a number from 1 to 4294967294 (0 is root)"
     valid_id "$gid" || die "user \"$name\": gid \"$gid\" must be a number from 1 to 4294967294 (0 is root)"
@@ -193,6 +200,23 @@ parse_spec() {
     U_UID[$name]=$uid
     U_GID[$name]=$gid
     U_DIRS[$name]=$dirs
+    U_RSYNC[$name]=$rsync
+}
+
+# Adds the accounts SFTP_RSYNC_USERS names (* for every account) to those
+# marked :rsync on their own line.
+resolve_rsync_users() {
+    local -a names=()
+    local name account
+    read -r -a names <<<"$SFTP_RSYNC_USERS"
+    for name in "${names[@]}"; do
+        if [[ $name == "*" ]]; then
+            for account in "${USERS[@]}"; do U_RSYNC[$account]=rsync; done
+            return 0
+        fi
+        [[ -n ${U_PASS[$name]+set} ]] || die "SFTP_RSYNC_USERS names \"$name\", which is not a configured account"
+        U_RSYNC[$name]=rsync
+    done
 }
 
 ensure_group() {
@@ -201,9 +225,11 @@ ensure_group() {
 }
 
 apply_account() {
-    local name=$1 uid=${U_UID[$1]} gid=${U_GID[$1]:-$DEFAULT_GID}
+    local name=$1 uid=${U_UID[$1]} gid=${U_GID[$1]:-$DEFAULT_GID} shell=/usr/sbin/nologin
+    [[ -n ${U_RSYNC[$name]} ]] && shell=$RSYNC_GATE
     ensure_group "$gid"
     if getent passwd "$name" >/dev/null; then
+        [[ $(getent passwd "$name" | cut -d: -f7) == "$shell" ]] || usermod --shell "$shell" "$name"
         if [[ -n $uid && $(id -u "$name") != "$uid" ]]; then
             usermod --non-unique --uid "$uid" "$name"
             info "user $name: uid changed to $uid"
@@ -214,7 +240,7 @@ apply_account() {
         fi
         usermod --append --groups "$SFTP_GROUP" "$name"
     else
-        local -a args=(--no-create-home --home-dir "/home/$name" --shell /usr/sbin/nologin
+        local -a args=(--no-create-home --home-dir "/home/$name" --shell "$shell"
             --comment "$MANAGED_COMMENT" --no-user-group --gid "$gid" --groups "$SFTP_GROUP")
         [[ -n $uid ]] && args+=(--non-unique --uid "$uid")
         useradd "${args[@]}" "$name"
@@ -341,6 +367,69 @@ setup_users() {
     info "accounts configured: ${#USERS[@]}"
 }
 
+# Copies a file into a jail at the same path, root-owned, with every library
+# an executable loads, and records each path in the manifest.
+jail_copy() {
+    local jail=$1 file=$2 manifest=$3 real lib
+    real=$(readlink -f -- "$file")
+    install -D -m 755 -o root -g root -- "$real" "$jail$real"
+    printf '%s\n' "$real" >>"$manifest"
+    if [[ $file != "$real" ]]; then
+        mkdir -p -- "$jail${file%/*}"
+        ln -sfn -- "$real" "$jail$file"
+        printf '%s\n' "$file" >>"$manifest"
+    fi
+    [[ $(head -c 4 -- "$real") == $'\x7fELF' ]] || return 0
+    while read -r lib; do
+        install -D -m 755 -o root -g root -- "$(readlink -f -- "$lib")" "$jail$lib"
+        printf '%s\n' "$lib" >>"$manifest"
+    done < <(ldd "$real" | awk '/=>/ { print $3 } /^[[:space:]]*\// { print $1 }')
+}
+
+# Removes what jail_copy put in a jail, and the directories it left empty.
+empty_rsync_jail() {
+    local name=$1 manifest=$RSYNC_STATE/$1 path dir
+    [[ -f $manifest ]] || return 0
+    while read -r path; do rm -f -- "/home/$name$path"; done <"$manifest"
+    while read -r path; do
+        dir=${path%/*}
+        while [[ -n $dir && -d /home/$name$dir && -z $(ls -A -- "/home/$name$dir") ]]; do
+            rmdir -- "/home/$name$dir"
+            dir=${dir%/*}
+        done
+    done < <(sort -ru "$manifest")
+    rm -f -- "$manifest"
+    info "user $name: rsync removed from the jail"
+}
+
+# Puts sh, rsync and the gate into the jail of every account allowed rsync,
+# and lets those accounts run commands, which their login shell, the gate,
+# limits to an rsync server.
+setup_rsync() {
+    install -d -m 700 "$RSYNC_STATE"
+    local name top file manifest
+    local -a allowed=()
+    for name in "${USERS[@]}"; do
+        if [[ -z ${U_RSYNC[$name]} ]]; then
+            empty_rsync_jail "$name"
+            continue
+        fi
+        for top in bin lib lib64 usr; do
+            if [[ -e /home/$name/$top && $(stat -c %u -- "/home/$name/$top") != 0 ]]; then
+                warn "user $name: /home/$name/$top belongs to the user, so rsync is not set up in this jail"
+                continue 2
+            fi
+        done
+        manifest=$RSYNC_STATE/$name
+        : >"$manifest"
+        for file in "${RSYNC_JAIL_FILES[@]}"; do jail_copy "/home/$name" "$file" "$manifest"; done
+        allowed+=("$name")
+        info "user $name: rsync allowed"
+    done
+    ((${#allowed[@]})) || return 0
+    printf '\nMatch User %s\n    ForceCommand none\n' "$(IFS=,; printf '%s' "${allowed[*]}")" >>/etc/ssh/sshd_config
+}
+
 write_users_template() {
     [[ -e $USERS_CONF ]] && return 0
     cat >"$USERS_CONF" <<'EOF'
@@ -404,6 +493,7 @@ sshd_options_from_env() {
         force+=" -u $SFTP_UMASK"
     fi
     [[ $force == internal-sftp ]] || SSHD_OPTS+=(-o "ForceCommand=$force")
+    SFTP_COMMAND=$force
     # modern keeps plain hmac-sha2-256/512 for clients without
     # encrypt-then-MAC support; strict accepts encrypt-then-MAC only.
     case "${SFTP_CRYPTO_POLICY,,}" in
@@ -426,6 +516,11 @@ setup_sshd() {
         fi
     fi
     if ! $SSHD_LEGACY; then
+        # Accounts allowed rsync run sftp through the Subsystem line, not
+        # ForceCommand, so it carries the same -l and -u options.
+        if [[ $SFTP_COMMAND != internal-sftp ]]; then
+            sed -i "s|^Subsystem sftp internal-sftp\$|Subsystem sftp $SFTP_COMMAND|" /etc/ssh/sshd_config
+        fi
         for f in "$SSHD_DIR"/sshd_config.d/*.conf; do
             install -m 644 -o root -g root -- "$f" /etc/ssh/sshd_config.d/
             info "sshd drop-in: $f"
@@ -692,11 +787,13 @@ main() {
         exit 3
     fi
     parse_specs
+    resolve_rsync_users
     setup_auth_log
     sshd_options_from_env
     setup_sshd
     setup_host_keys
     setup_users
+    setup_rsync
     run_custom_scripts
     validate_sshd
     setup_transfer_logging

@@ -14,6 +14,7 @@ Every variable the container reads. All are optional. A value the image does not
 | `SFTP_UMASK` | empty | three or four octal digits, such as `002` or `0027` | The umask, the permission bits removed from files and directories users create; empty keeps `022`, which removes write permission for group and others |
 | `SFTP_CRYPTO_POLICY` | `modern` | `modern`, `strict` | `strict` drops the plain `hmac-sha2-256` and `hmac-sha2-512` MACs ([Built-in Settings](../built-in-settings/)) |
 | `SFTP_AUTH_LOG_MAX_BYTES` | `10485760` | a whole number of bytes; `0` for no cap | The size at which `/var/log/auth.log` is copied to `auth.log.1` and emptied. Read every five seconds |
+| `SFTP_RSYNC_USERS` | empty | account names separated by spaces, or `*` | Accounts allowed rsync over SSH, besides those whose line ends in `:rsync`; a name that is not an account stops the container ([How To Allow rsync](../../how-to/allow-rsync/)) |
 | `FAIL2BAN_ENABLED` | `true` | as `SFTP_LOG_TRANSFERS` | `false` runs without fail2ban |
 | `TZ` | `UTC` | a zone name such as `Europe/Berlin` | The time zone of log timestamps |
 

@@ -27,7 +27,7 @@ CLIENT=$RUN_ID-client
 ATTACKER=$RUN_ID-attacker
 WORK=$(mktemp -d)
 FIXTURES=$PWD/tests/fixtures
-ALL_SCENARIOS=(main crash hardened port options rotation legacy reject)
+ALL_SCENARIOS=(main crash hardened port options rotation rsync legacy reject)
 PASSED=0
 FAILED=0
 SKIPPED=0
@@ -161,6 +161,14 @@ ssh_password() {
     shift 4
     engine exec -e SSH_ASKPASS=/client/askpass -e SSH_ASKPASS_REQUIRE=force -e TEST_PASSWORD="$pw" "$from" \
         timeout 20 ssh "$@" "${SSH_OPTS[@]}" -o PubkeyAuthentication=no -l "$user" "$SERVER_IP" "${remote[@]}"
+}
+
+# rsync_password <from> <user> <password> <rsync arguments...>
+rsync_password() {
+    local from=$1 user=$2 pw=$3
+    shift 3
+    engine exec -e SSH_ASKPASS=/client/askpass -e SSH_ASKPASS_REQUIRE=force -e TEST_PASSWORD="$pw" "$from" \
+        timeout 30 rsync -e "ssh ${SSH_OPTS[*]} -o PubkeyAuthentication=no -l $user" "$@"
 }
 
 # negotiate [ssh options...]: a connection that stops at authentication.
@@ -446,6 +454,47 @@ scenario_rotation() {
 }
 
 # ---------------------------------------------------------------------------
+# rsync through the jail: rhea is opted in on her account line, ray by
+# SFTP_RSYNC_USERS, and sam not at all.
+# ---------------------------------------------------------------------------
+scenario_rsync() {
+    SERVER=$RUN_ID-rsync
+    local cfg=$WORK/rsync/config user
+    mkdir -p "$cfg/sshd"
+    printf '%s\n' "rhea:rhea-pw:1101:100:up:rsync" "ray:ray-pw:1102:100:up" "sam:sam-pw:1103:100:up" \
+        >"$cfg/sshd/users.conf"
+    start_server "$SERVER" "$cfg" -e SFTP_RSYNC_USERS=ray -e SFTP_UMASK=002 || die "rsync server did not start"
+    if ! wait_healthy "$SERVER"; then
+        fail "rsync server becomes healthy" "$(server_log_tail)"
+        return
+    fi
+    trust_host "$SERVER" "$cfg"
+    engine exec "$CLIENT" sh -c 'head -c 65536 /dev/urandom >/tmp/blob && cp /client/hello.txt /tmp/open.txt && chmod 666 /tmp/open.txt'
+
+    for user in rhea ray; do
+        capture rsync_password "$CLIENT" "$user" "$user-pw" /tmp/blob "$SERVER_IP:up/"
+        capture in_server stat -c %s:%u "/home/$user/up/blob"
+        expect "$user pushes with rsync" [ "$OUT" = "65536:$(in_server id -u "$user")" ]
+        capture rsync_password "$CLIENT" "$user" "$user-pw" "$SERVER_IP:up/blob" "/tmp/pulled-$user"
+        expect "$user pulls with rsync" engine exec "$CLIENT" cmp /tmp/blob "/tmp/pulled-$user"
+    done
+
+    capture rsync_password "$CLIENT" sam sam-pw /tmp/blob "$SERVER_IP:up/"
+    expect "an account not allowed rsync cannot use it" eval '((RC != 0)) && ! in_server test -e /home/sam/up/blob'
+    capture ssh_password "$CLIENT" rhea rhea-pw id
+    expect "the gate refuses commands other than rsync" \
+        eval 'has "This service allows sftp and rsync connections only." && lacks "uid="'
+    capture rsync_password "$CLIENT" rhea rhea-pw "$SERVER_IP:/etc/passwd" /tmp/stolen-passwd
+    expect "rsync stays inside the jail" eval '((RC != 0)) && ! engine exec "$CLIENT" test -s /tmp/stolen-passwd'
+
+    capture sftp_password "$CLIENT" rhea rhea-pw "put /tmp/open.txt up/open.txt"
+    capture in_server stat -c %a /home/rhea/up/open.txt
+    expect "sftp of an rsync account keeps SFTP_UMASK (666 becomes 664)" [ "$OUT" = 664 ]
+    capture in_server ls /home/sam
+    expect "an account not allowed rsync gets no binaries in its jail" eval 'lacks bin && lacks usr'
+}
+
+# ---------------------------------------------------------------------------
 # 1.x configuration in /config, untouched and edited.
 # ---------------------------------------------------------------------------
 scenario_legacy() {
@@ -505,6 +554,9 @@ scenario_reject() {
     reject "refuses an out-of-range port" "is not a port number" eve:pw -e SFTP_PORT=70000
     reject "refuses a flag that is not true or false" "FAIL2BAN_ENABLED=maybe must be true or false" \
         eve:pw -e FAIL2BAN_ENABLED=maybe
+    reject "refuses an unknown field after the directories" "must be rsync or empty" eve:pw:::up:shell
+    reject "refuses SFTP_RSYNC_USERS naming an unknown account" "not a configured account" \
+        eve:pw -e SFTP_RSYNC_USERS=mallory
 
     mkdir -p "$WORK/empty"
     capture timeout 60 "$ENGINE" run --rm -v "$WORK/empty:/config" "$IMAGE"

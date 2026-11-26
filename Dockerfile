@@ -23,6 +23,7 @@ RUN apt-get update \
         fail2ban \
         iptables \
         openssh-server \
+        rsync \
         rsyslog \
         systemd-standalone-sysusers \
         tini \
@@ -45,6 +46,7 @@ RUN chmod 0644 /etc/ssh/sshd_config /etc/rsyslog.conf \
         /etc/fail2ban/jail.d/00-sftp.conf /etc/fail2ban/fail2ban.d/00-sftp.conf \
         /usr/local/lib/sftp/legacy-defaults.sha256 \
  && chmod 0755 /usr/local/bin/entrypoint /usr/local/bin/healthcheck \
+        /usr/local/libexec/sftp/rsync-gate \
  && install -d -m 0755 /usr/local/share/sftp \
  && cp /etc/ssh/sshd_config /usr/local/share/sftp/sshd_config \
  && cp -a /etc/fail2ban /usr/local/share/sftp/fail2ban \

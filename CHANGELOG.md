@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.1.0
+
+- rsync over SSH for chosen accounts, inside their jails: end an account
+  line with `:rsync`, or name the account in `SFTP_RSYNC_USERS` (`*` for
+  every account). The account's login shell becomes a gate that runs only
+  an rsync server command, and its jail gets root-owned copies of `sh`,
+  `rsync` and their libraries, refreshed on every start and removed when
+  the account loses rsync. Other accounts stay SFTP-only.
+- `SFTP_LOG_TRANSFERS` and `SFTP_UMASK` also apply through the sftp
+  `Subsystem` line, so accounts allowed rsync keep both.
+- rsync is installed in the image.
+
 ## 2.0.0
 
 A rewrite. The `users.conf` format and the `/config` layout are kept, and a

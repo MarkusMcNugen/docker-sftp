@@ -7,6 +7,8 @@ weight: 2
 
 A user can only transfer files. sshd's `ForceCommand internal-sftp` runs the SFTP server for every session, so a command, a shell or a terminal is refused, and all forwarding is disabled: ports, agents, Unix sockets, X11 and tunnels. Accounts have the `nologin` shell as a second barrier.
 
+Accounts allowed rsync are the one exception: their login shell is a gate that runs an rsync server command and refuses everything else. To make that possible, their jail holds root-owned copies of `sh`, `rsync` and the libraries they load, which the user can run only through the gate and cannot change ([How To Allow rsync](../../how-to/allow-rsync/)).
+
 Each session runs inside the user's home with `ChrootDirectory %h`: `/` in the session is `/home/<name>`. Because the jail's root must belong to root, a user writes only into subdirectories given to them.
 
 ## Keys outside the jail

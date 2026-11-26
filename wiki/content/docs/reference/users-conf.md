@@ -6,7 +6,7 @@ weight: 2
 ## Grammar
 
 ```text
-name:password[:e][:uid[:gid[:dir1,dir2,...]]]
+name:password[:e][:uid[:gid[:dir1,dir2,...[:rsync]]]]
 ```
 
 | Field | Required | Rule | Default |
@@ -17,6 +17,7 @@ name:password[:e][:uid[:gid[:dir1,dir2,...]]]
 | `uid` | no | a number from 1 to 4294967294; may repeat another account's | the next free uid from 1000 |
 | `gid` | no | a number from 1 to 4294967294; a missing group is created as `group_<gid>` | 100 (`users`) |
 | `dirs` | no | comma-separated relative paths, without `.` or `..` components | none |
+| `rsync` | no | the literal `rsync`, allowing rsync over SSH ([How To Allow rsync](../../how-to/allow-rsync/)) | SFTP only |
 
 Fields are positional, so an empty field keeps its place: `alice:pw:::upload` has no uid or gid and one directory.
 

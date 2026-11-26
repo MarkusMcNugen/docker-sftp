@@ -60,6 +60,7 @@ jobs:
           docker run --rm -v "$PWD:/mnt:ro" -w /mnt koalaman/shellcheck:v0.11.0 -x
           rootfs/usr/local/bin/entrypoint
           rootfs/usr/local/bin/healthcheck
+          rootfs/usr/local/libexec/sftp/rsync-gate
           tests/run-tests.sh
       - uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
         with:
