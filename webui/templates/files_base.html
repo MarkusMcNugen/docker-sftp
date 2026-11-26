@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true,"historyCacheSize":0,"refreshOnHistoryMiss":true,"responseHandling":[{"code":"204","swap":false},{"code":"...","swap":true}]}'>
+<title>{{ l.title }} - sftp files</title>
+<link rel="icon" type="image/svg+xml" href="{{ l.favicon }}">
+<link rel="stylesheet" href="{{ l.css }}">
+<script src="{{ l.htmx }}" defer></script>
+<script src="{{ l.js }}" defer></script>
+<script src="{{ files_js }}" defer></script>
+</head>
+<body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{ l.csrf }}"}'>
+<div class="app">
+<div class="shell">
+  <aside class="sidebar" aria-label="Main">
+    <a class="brand" href="/">{{ crate::assets::BRAND|safe }}<span class="brand-name">sftp</span><span class="brand-tag">Files</span></a>
+    <nav class="nav">
+      <a class="nav-item" href="/" data-tip="My files" data-tip-side="right"{% if place.own(account) %} aria-current="page"{% endif %}>{{ crate::assets::icon("folder-user")|safe }}<span class="nav-text">My files</span></a>
+      <a class="nav-item" href="/links" data-tip="Links you shared" data-tip-side="right">{{ crate::assets::icon("share-network")|safe }}<span class="nav-text">Links you shared</span></a>
+      {% if !place.managed.is_empty() %}<div class="nav-label">You manage</div>
+      {% for m in place.managed %}<a class="nav-item" href="/m/{{ m|urlencode }}/" data-tip="Files of {{ m }}" data-tip-side="right"{% if place.acting.as_str() == m.as_str() %} aria-current="page"{% endif %}>{{ crate::assets::icon("user-switch")|safe }}<span class="nav-text">{{ m }}</span></a>{% endfor %}{% endif %}
+    </nav>
+    <div class="sidebar-foot">
+      <details class="user-menu">
+        <summary class="user-button" data-tip="{{ account }}" data-tip-side="right"><span class="avatar">{{ l.initials }}</span><span class="user-text"><span class="user-name">{{ account }}</span><span class="user-role">File browser</span></span><span class="chev">{{ crate::assets::icon("caret-up-down")|safe }}</span></summary>
+        <div class="menu" role="menu">
+          <div class="menu-row">Theme<div class="segmented" role="group" aria-label="Theme"><button type="button" data-theme-set="light" aria-pressed="false" aria-label="Light theme" data-tip="Light">{{ crate::assets::icon("sun")|safe }}</button><button type="button" data-theme-set="dark" aria-pressed="false" aria-label="Dark theme" data-tip="Dark">{{ crate::assets::icon("moon")|safe }}</button><button type="button" data-theme-set="system" aria-pressed="true" aria-label="Follow the system theme" data-tip="Follow the system">{{ crate::assets::icon("desktop")|safe }}</button></div></div>
+          <div class="menu-sep"></div>
+          <form method="post" action="/logout" hx-boost="false"><input type="hidden" name="csrf" value="{{ l.csrf }}"><button type="submit" class="menu-item" role="menuitem">{{ crate::assets::icon("sign-out")|safe }}Sign out</button></form>
+        </div>
+      </details>
+    </div>
+  </aside>
+  <div class="scrim" data-close-nav></div>
+  <div class="main-col">
+    {% block content %}{% endblock %}
+  </div>
+</div>
+</div>
+</body>
+</html>

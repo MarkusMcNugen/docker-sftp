@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block content %}
+<section class="card"><div class="card-body"><div class="profile"><span class="avatar lg {{ l.tone }}">{{ l.initials }}</span><div class="profile-text"><span class="profile-name">{{ l.admin }}</span><span class="inline-set"><span class="pill accent" data-tip="Your role, {{ role }} in the admin store">{{ l.role_label }}</span></span></div></div></div></section>
+<div class="grid">
+  <section class="card">
+    <header class="card-head"><h2 class="card-title">{{ crate::assets::icon("device-mobile")|safe }}<span>Two-factor sign-in</span></h2><span class="card-actions">{% if has_totp %}<span class="pill ok">{{ crate::assets::icon("check-circle")|safe }}On</span>{% else %}<span class="pill warn">{{ crate::assets::icon("warning-circle")|safe }}Off</span>{% endif %}</span></header>
+    {% if !setup_qr.is_empty() %}
+    <div class="card-body"><div class="setup-2fa"><div class="qr">{{ setup_qr|safe }}</div><div class="vstack">
+      <span class="field-label">Scan with an authenticator app</span>
+      <div class="copy-field"><code>{{ setup_secret }}</code><button type="button" class="btn btn-ghost btn-icon btn-sm" data-copy="{{ setup_secret }}" aria-label="Copy the key to type it in instead" data-tip="Copy the key">{{ crate::assets::icon("copy")|safe }}</button></div>
+      <form method="post" action="/me/totp/confirm" class="form-row"><input type="hidden" name="csrf" value="{{ l.csrf }}"><label class="field grow"><span class="field-label">Code from the app</span><input class="input mono" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="123456" autocomplete="one-time-code" required></label><button type="submit" class="btn btn-primary">{{ crate::assets::icon("check-circle")|safe }}Turn on</button></form>
+    </div></div></div>
+    {% else if has_totp %}
+    {% if trusted %}<div class="card-body"><span class="meta">{{ crate::assets::icon("shield-check")|safe }}Not asked from this trusted network</span></div>{% endif %}
+    <div class="card-body"><form method="post" action="/me/totp/disable" class="form-row" hx-confirm="Turn off two-factor sign-in?"><input type="hidden" name="csrf" value="{{ l.csrf }}"><label class="field grow"><span class="field-label">Your password{% call m::help("Needed to turn two-factor off") %}{% endcall %}</span><input class="input" type="password" name="current" autocomplete="current-password" required></label><button type="submit" class="btn btn-secondary">{{ crate::assets::icon("x-circle")|safe }}Turn off</button></form></div>
+    {% else %}
+    <div class="card-body"><form method="post" action="/me/totp/start"><input type="hidden" name="csrf" value="{{ l.csrf }}"><button type="submit" class="btn btn-primary" data-tip="A code from an app protects this account even if the password leaks">{{ crate::assets::icon("device-mobile")|safe }}Set up two-factor sign-in</button></form></div>
+    {% endif %}
+  </section>
+  <section class="card">
+    <header class="card-head"><h2 class="card-title">{{ crate::assets::icon("key")|safe }}<span>Password</span></h2></header>
+    {% if from_file %}
+    <div class="card-body"><span class="meta">{{ crate::assets::icon("lock-simple")|safe }}Set in WEBUI_ADMIN_FILE; change it there.</span></div>
+    {% else %}
+    <form method="post" action="/me/password">
+      <input type="hidden" name="csrf" value="{{ l.csrf }}"><input type="hidden" name="username" value="{{ l.admin }}" autocomplete="username">
+      <div class="card-body stack">
+        <label class="field"><span class="field-label">Current password</span><input class="input" type="password" name="current" autocomplete="current-password" required></label>
+        <label class="field"><span class="field-label">New password{% call m::help("At least 12 characters") %}{% endcall %}</span><input class="input" type="password" name="password" autocomplete="new-password" minlength="{{ min_password }}" required></label>
+        <label class="field"><span class="field-label">New password again</span><input class="input" type="password" name="confirm" autocomplete="new-password" minlength="{{ min_password }}" required></label>
+      </div>
+      <div class="card-foot"><button type="submit" class="btn btn-primary">{{ crate::assets::icon("check")|safe }}Change password</button></div>
+    </form>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

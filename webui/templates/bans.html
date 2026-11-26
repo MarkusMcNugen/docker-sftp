@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block actions %}<form method="get" action="/bans" class="segmented text" role="group" aria-label="Time range for the chart">{% if show_history %}<input type="hidden" name="show" value="history">{% endif %}{% for r in ranges %}<button type="submit" name="range" value="{{ r.value }}" aria-pressed="{% if r.on %}true{% else %}false{% endif %}">{{ r.label }}</button>{% endfor %}</form>{% endblock %}
+{% block content %}
+{% if !enabled %}
+<div class="alert warn">{{ crate::assets::icon("shield-warning")|safe }}<div class="alert-body"><span class="alert-title">fail2ban is not running</span><span class="alert-text">No address is banned. FAIL2BAN_ENABLED is false, or fail2ban has no firewall access.</span></div></div>
+{% else %}
+{% if let Some(text) = drift %}<div class="alert warn">{{ crate::assets::icon("sliders-horizontal")|safe }}<div class="alert-body"><span class="alert-title">Other rules are in effect</span><span class="alert-text">{{ text }}</span></div></div>{% endif %}
+{% if let Some(e) = records_error %}<div class="alert warn">{{ crate::assets::icon("warning-circle-fill")|safe }}<div class="alert-body"><span class="alert-title">Ban times are unknown</span><span class="alert-text">fail2ban's database could not be read: {{ e }}</span></div></div>{% endif %}
+<div class="stats">
+  <div class="stat"><div class="stat-head"><span>Banned now</span>{{ crate::assets::icon("prohibit")|safe }}</div><div class="stat-value">{{ rows.len() }}</div><div class="stat-foot"><span class="icon-stats"><span class="meta" data-tip="From SFTP logins">{{ crate::assets::icon("terminal-window")|safe }}{{ banned_ssh }}</span><span class="meta" data-tip="From web logins">{{ crate::assets::icon("globe-hemisphere-west")|safe }}{{ banned_web }}</span></span></div></div>
+  <div class="stat"><div class="stat-head"><span>Failed logins</span>{{ crate::assets::icon("x-circle")|safe }}</div><div class="stat-value">{{ failed_total }}</div><div class="stat-foot"><span class="stat-note">Since fail2ban started</span><span class="meta" data-tip="Addresses with failed logins that are not banned yet">{{ crate::assets::icon("hourglass-medium")|safe }}{{ failing_now }}</span></div></div>
+  <div class="stat"><div class="stat-head"><span>Bans</span>{{ crate::assets::icon("gavel")|safe }}</div><div class="stat-value">{{ bans_total }}</div><div class="stat-foot"><span class="stat-note">Since fail2ban started</span></div></div>
+  <div class="stat"><div class="stat-head"><span>Repeat offenders</span>{{ crate::assets::icon("repeat")|safe }}</div><div class="stat-value">{{ repeat_now }}</div><div class="stat-foot"><span class="stat-note">Banned before, and again now</span></div></div>
+</div>
+<section class="card">
+  <div class="filters">
+    <form method="get" action="/bans" class="segmented text" role="group" aria-label="Show"><button type="submit" name="show" value="" aria-pressed="{% if show_history %}false{% else %}true{% endif %}">Banned now</button><button type="submit" name="show" value="history" aria-pressed="{% if show_history %}true{% else %}false{% endif %}" data-tip="Every ban since the history began, including ended ones">History</button></form>
+    <div class="segmented text" role="group" aria-label="Door" data-filter="bans-table" data-filter-key="door"><button type="button" aria-pressed="true" data-value="">All</button><button type="button" aria-pressed="false" data-value="ssh" aria-label="SFTP logins" data-tip="SFTP logins">{{ crate::assets::icon("terminal-window")|safe }}</button><button type="button" aria-pressed="false" data-value="web" aria-label="Web logins" data-tip="Web logins">{{ crate::assets::icon("globe-hemisphere-west")|safe }}</button></div>
+    <select class="select" aria-label="Kind" data-filter="bans-table" data-filter-key="kind"><option value="">Every kind</option><option value="auto">Automatic</option><option value="repeat">Repeat</option><option value="admin">By an admin</option></select>
+    <label class="search">{{ crate::assets::icon("magnifying-glass")|safe }}<input class="input" type="search" placeholder="Address" aria-label="Search banned addresses" data-filter="bans-table"></label>
+    {% if l.full %}<details class="dropdown"><summary class="btn btn-secondary" data-tip="Block every port for an address, for as long as the rules say">{{ crate::assets::icon("gavel")|safe }}Ban an address</summary><form class="dropdown-panel" method="post" action="/bans/ban" hx-confirm="Ban this address on every port?"><input type="hidden" name="csrf" value="{{ l.csrf }}"><label class="field"><span class="field-label">Address</span><input class="input mono" name="address" placeholder="203.0.113.9 or 2001:db8::9" autocomplete="off" required></label><button type="submit" class="btn btn-danger">{{ crate::assets::icon("prohibit")|safe }}Ban</button></form></details>{% endif %}
+  </div>
+  {% if show_history %}
+  {% if let Some(e) = history_error %}<div class="alert warn">{{ crate::assets::icon("warning-circle-fill")|safe }}<div class="alert-body"><span class="alert-title">The ban history is unavailable</span><span class="alert-text">{{ e }}</span></div></div>{% endif %}
+  <div class="table-wrap"><table class="table stack" id="bans-table">
+    <thead><tr>{% call m::sort("Address", "") %}{% endcall %}{% call m::sort_in("Country", "", "opt-sm") %}{% endcall %}{% call m::sort("Door", "") %}{% endcall %}{% call m::sort("Banned", "number") %}{% endcall %}{% call m::sort("Length", "number") %}{% endcall %}{% call m::sort_in("Failures", "number", "opt-sm") %}{% endcall %}<th class="opt-md">Names tried</th>{% call m::sort_in("Kind", "", "opt-md") %}{% endcall %}{% call m::sort("State", "") %}{% endcall %}</tr></thead>
+    <tbody>
+    {% for r in history %}
+      <tr data-door="{{ r.door }}" data-kind="{{ r.kind }}">
+        <td class="lead" data-sort="{{ r.address }}"><code class="name">{{ r.address }}</code></td>
+        <td class="opt-sm" data-label="Country" data-sort="{{ r.country }}">{% if r.country.is_empty() %}<span class="muted">Unknown</span>{% else %}<img class="flag" src="{{ crate::assets::flag(r.country) }}" alt="{{ r.country }}" data-cc="{{ r.country }}" data-tip="{{ r.country }}">{% endif %}</td>
+        <td data-label="Door" data-sort="{{ r.door }}">{% if r.door == "ssh" %}<span class="door" data-tip="SFTP logins">{{ crate::assets::icon("terminal-window")|safe }}</span>{% else if r.door == "web" %}<span class="door web" data-tip="Web logins">{{ crate::assets::icon("globe-hemisphere-west")|safe }}</span>{% else %}<span class="pill mono" data-tip="The fail2ban jail that banned it">{{ r.jail }}</span>{% endif %}</td>
+        <td data-label="Banned" data-sort="{{ r.since_sort }}"><time datetime="{{ r.since_iso }}" data-tip-prefix="Banned ">{{ r.since }}</time></td>
+        <td data-label="Length" data-sort="{{ r.length_sort }}">{{ r.length }}</td>
+        <td class="opt-sm num" data-label="Failures">{% if r.failures_muted %}<span class="muted">{{ r.failures }}</span>{% else %}{{ r.failures }}{% endif %}</td>
+        <td class="opt-md" data-label="Names tried">{% if r.names.is_empty() %}<span class="muted">None recorded</span>{% else %}<span class="inline-set">{% for n in r.names %}<code>{{ n }}</code>{% endfor %}</span>{% endif %}</td>
+        <td class="opt-md" data-label="Kind" data-sort="{{ r.kind }}">{% if r.kind == "admin" %}<span class="meta" data-tip="Banned by an admin">{{ crate::assets::icon("gavel")|safe }}By an admin</span>{% else if r.kind == "repeat" %}<span class="meta" data-tip="Banned {{ r.count }} times, this one included">{{ crate::assets::icon("repeat")|safe }}Repeat</span>{% else %}<span class="meta" data-tip="Banned after repeated failed logins">{{ crate::assets::icon("shield-check")|safe }}Automatic</span>{% endif %}</td>
+        <td data-label="State" data-sort="{% if r.active %}a{% else %}b{% endif %}">{% if r.active %}<span class="pill warn">{{ crate::assets::icon("prohibit")|safe }}Banned now</span>{% else %}<span class="muted">Ended</span>{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="9"><div class="empty">{{ crate::assets::icon("clock-counter-clockwise")|safe }}<span class="empty-title">No bans in the history yet</span><span>Bans are copied from fail2ban every half minute and kept for good.</span></div></td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <div class="empty" data-filter-empty="bans-table" hidden>{{ crate::assets::icon("magnifying-glass")|safe }}<span class="empty-title">No ban matches</span></div>
+  <div class="pager"><span class="note">Newest first</span><span class="row-actions">{% if !history_first %}<a class="btn btn-ghost btn-sm" href="/bans?show=history">{{ crate::assets::icon("caret-left")|safe }}Newest</a>{% endif %}{% if let Some(older) = older %}<a class="btn btn-ghost btn-sm" href="/bans?show=history&amp;before={{ older }}">Older{{ crate::assets::icon("caret-right")|safe }}</a>{% endif %}</span></div>
+  {% else %}
+  {% if l.full %}<form class="bulk-bar" id="bans-lift" method="post" action="/bans/lift" hx-confirm="Lift the selected bans?" data-one="ban" data-many="bans" hidden><input type="hidden" name="csrf" value="{{ l.csrf }}"><span class="count"></span><button type="submit" class="btn btn-ghost btn-sm" data-tip="Lift every selected ban now">{{ crate::assets::icon("lock-simple-open")|safe }}Lift</button><button type="button" class="btn btn-ghost btn-icon btn-sm" data-clear-picks aria-label="Clear the selection" data-tip="Clear the selection">{{ crate::assets::icon("x")|safe }}</button></form>{% endif %}
+  <div class="table-wrap"><table class="table stack" id="bans-table">
+    <thead><tr>{% if l.full %}<th class="pick"><input type="checkbox" aria-label="Select every listed ban"></th>{% endif %}{% call m::sort("Address", "") %}{% endcall %}{% call m::sort_in("Country", "", "opt-sm") %}{% endcall %}{% call m::sort("Door", "") %}{% endcall %}{% call m::sort("Banned", "number") %}{% endcall %}{% call m::sort("Time left", "number") %}{% endcall %}{% call m::sort_in("Failures", "number", "opt-sm") %}{% endcall %}{% call m::sort_in("Kind", "", "opt-md") %}{% endcall %}<th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr data-door="{{ r.door }}" data-kind="{{ r.kind }}">
+        {% if l.full %}<td class="pick"><input type="checkbox" name="ban" value="{{ r.jail }} {{ r.address }}" form="bans-lift" aria-label="Select {{ r.address }}"></td>{% endif %}
+        <td class="lead" data-sort="{{ r.address }}"><code class="name">{{ r.address }}</code></td>
+        <td class="opt-sm" data-label="Country" data-sort="{{ r.country }}">{% if r.country.is_empty() %}<span class="muted">Unknown</span>{% else %}<img class="flag" src="{{ crate::assets::flag(r.country) }}" alt="{{ r.country }}" data-cc="{{ r.country }}" data-tip="{{ r.country }}">{% endif %}</td>
+        <td data-label="Door" data-sort="{{ r.door }}">{% if r.door == "ssh" %}<span class="door" data-tip="SFTP logins">{{ crate::assets::icon("terminal-window")|safe }}</span>{% else if r.door == "web" %}<span class="door web" data-tip="Web logins">{{ crate::assets::icon("globe-hemisphere-west")|safe }}</span>{% else %}<span class="pill mono" data-tip="The fail2ban jail that banned it">{{ r.jail }}</span>{% endif %}</td>
+        <td data-label="Banned" data-sort="{{ r.since_sort }}">{% if r.since_iso.is_empty() %}<span class="muted">{{ r.since }}</span>{% else %}<time datetime="{{ r.since_iso }}" data-tip-prefix="Banned ">{{ r.since }}</time>{% endif %}</td>
+        <td data-label="Time left" data-sort="{{ r.left_sort }}">{% if r.forever %}<span class="pill" data-tip="This ban never ends">{{ crate::assets::icon("infinity")|safe }}{{ r.left }}</span>{% else if r.ends_iso.is_empty() %}<span class="muted">{{ r.left }}</span>{% else %}<span class="pill">{{ crate::assets::icon("hourglass-medium")|safe }}<time datetime="{{ r.ends_iso }}" data-tip-prefix="Ends ">{{ r.left }}</time></span>{% endif %}</td>
+        <td class="opt-sm num" data-label="Failures" data-sort="{{ r.failures_sort }}">{% if r.failures_muted %}<span class="muted">{{ r.failures }}</span>{% else %}{{ r.failures }}{% endif %}</td>
+        <td class="opt-md" data-label="Kind" data-sort="{{ r.kind }}">{% if r.kind == "admin" %}<span class="meta" data-tip="Banned by an admin">{{ crate::assets::icon("gavel")|safe }}By an admin</span>{% else if r.kind == "repeat" %}<span class="meta" data-tip="Banned {{ r.count }} times, this one included">{{ crate::assets::icon("repeat")|safe }}Repeat</span>{% else if r.kind == "auto" %}<span class="meta" data-tip="Banned after repeated failed logins">{{ crate::assets::icon("shield-check")|safe }}Automatic</span>{% else %}<span class="muted">Unknown</span>{% endif %}</td>
+        <td class="actions">{% if l.full %}<form method="post" action="/bans/unban"><input type="hidden" name="csrf" value="{{ l.csrf }}"><input type="hidden" name="jail" value="{{ r.jail }}"><input type="hidden" name="address" value="{{ r.address }}"><button type="submit" class="btn btn-ghost btn-icon btn-sm" aria-label="Lift the ban on {{ r.address }}" data-tip="Lift the ban">{{ crate::assets::icon("lock-simple-open")|safe }}</button></form>{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="{% if l.full %}9{% else %}8{% endif %}"><div class="empty">{{ crate::assets::icon("shield-check")|safe }}<span class="empty-title">No address is banned</span></div></td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <div class="empty" data-filter-empty="bans-table" hidden>{{ crate::assets::icon("magnifying-glass")|safe }}<span class="empty-title">No ban matches</span></div>
+  <div class="pager"><span class="note" data-filter-count="bans-table" data-one="ban" data-many="bans">{% if rows.len() == 1 %}1 ban{% else %}{{ rows.len() }} bans{% endif %}</span></div>
+  {% endif %}
+  {% if geo_credit == "dbip" %}<div class="pager"><span class="note">Countries: <a href="https://db-ip.com">IP Geolocation by DB-IP</a></span></div>{% else if geo_credit == "maxmind" %}<div class="pager"><span class="note">Countries: this product includes GeoLite2 data created by MaxMind, available from <a href="https://www.maxmind.com">maxmind.com</a></span></div>{% endif %}
+</section>
+{% if let Some(e) = chart_error %}<div class="alert warn">{{ crate::assets::icon("warning-circle-fill")|safe }}<div class="alert-body"><span class="alert-title">The ban chart is unavailable</span><span class="alert-text">{{ e }}</span></div></div>{% endif %}
+<div class="grid">{% if let Some(c) = chart %}{% include "chart_card.html" %}{% endif %}{% if let Some(c) = names %}{% include "chart_card.html" %}{% endif %}</div>
+{% endif %}
+<section class="card">
+  <header class="card-head"><h2 class="card-title">{{ crate::assets::icon("globe-hemisphere-west")|safe }}<span>Countries</span></h2><span class="card-actions"><span class="pill {{ countries.pill.0 }}" data-tip="{{ countries.pill.2 }}">{{ countries.pill.1 }}</span>{% call m::help("Drops new connections from the chosen countries to the SFTP and web UI ports, at the firewall. Private addresses, trusted networks and the never-ban list always pass") %}{% endcall %}</span></header>
+  <form method="post" action="/bans/countries" hx-confirm="Apply the country rules now? New connections from the countries they exclude are dropped.">
+    <input type="hidden" name="csrf" value="{{ l.csrf }}">{% if !countries.list_locked %}<input type="hidden" name="list" value="1">{% endif %}
+    <fieldset {% if !l.full %}disabled{% endif %}>
+    <div class="card-body geo-grid">
+      <div class="vstack">
+        {% if countries.no_database %}<div class="alert warn">{{ crate::assets::icon("warning-circle-fill")|safe }}<div class="alert-body"><span class="alert-title">No country database</span><span class="alert-text">The web UI could not read one, so countries show by code and the chart and suggestions are missing.</span></div></div>{% endif %}
+        {% if let Some(p) = countries.problem %}<div class="alert warn">{{ crate::assets::icon("shield-warning")|safe }}<div class="alert-body"><span class="alert-title">The country rules are not enforced</span><span class="alert-text">{{ p }}</span></div></div>{% endif %}
+        {% if !countries.skipped.is_empty() %}<div class="alert warn">{{ crate::assets::icon("warning-circle-fill")|safe }}<div class="alert-body"><span class="alert-title">Some never-ban entries are not exempt</span><span class="alert-text">{% for s in countries.skipped %}{{ s }}{% if !loop.last %}; {% endif %}{% endfor %}</span></div></div>{% endif %}
+        <div class="chip-row"><label class="chip-select" data-tip="Off, block the listed countries, or allow only the listed countries">{{ crate::assets::icon("globe-hemisphere-west")|safe }}<select name="rule" aria-label="Country rule"{% if countries.rule_locked %} disabled{% endif %}><option value="off"{% if countries.rule == "off" %} selected{% endif %}>Off</option><option value="block"{% if countries.rule == "block" %} selected{% endif %}>Block listed countries</option><option value="allow"{% if countries.rule == "allow" %} selected{% endif %}>Allow only listed countries</option></select><span class="caret">{{ crate::assets::icon("caret-down")|safe }}</span></label>{% if countries.rule_locked %}<span class="pill" data-tip="Set in the container's environment, which wins over this page">{{ crate::assets::icon("lock-simple")|safe }}Environment</span>{% endif %}</div>
+        <div class="chip-row"><span class="field-label">Listed{% call m::help("Starts with Project Honey Pot's top attack origins; change it freely") %}{% endcall %}</span>
+          {% for c in countries.listed %}<span class="chip-x"><img class="flag" src="{{ crate::assets::flag(c.code) }}" alt="" data-cc="{{ c.code }}" data-tip="{{ c.name }}"><span class="chip-text">{{ c.name }}</span>{% if !countries.list_locked %}<label class="chip-toggle" data-tip="Remove"><input type="checkbox" class="sr-only" name="country" value="{{ c.code }}" checked aria-label="Keep {{ c.name }}"><span class="on">{{ crate::assets::icon("x")|safe }}</span><span class="off">{{ crate::assets::icon("arrow-counter-clockwise")|safe }}</span></label>{% endif %}</span>{% endfor %}
+          {% if l.full && !countries.list_locked %}<details class="dropdown start"><summary class="chip-add" data-tip="Add a country">{{ crate::assets::icon("plus")|safe }}Add</summary><div class="dropdown-panel"><label class="field"><span class="field-label">Country</span><select class="select" name="country" data-chip-input="country-chip" aria-label="Country to add"><option value="">Choose a country</option>{% for o in countries.others %}<option value="{{ o.code }}" data-flag="{{ crate::assets::flag(o.code) }}">{{ o.name }}</option>{% endfor %}</select></label><span class="field-hint">Added when you save</span></div></details>{% else if countries.listed.is_empty() %}<span class="muted">None</span>{% endif %}
+          {% if countries.list_locked %}<span class="pill" data-tip="Set in the container's environment, which wins over this page">{{ crate::assets::icon("lock-simple")|safe }}Environment</span>{% endif %}
+        </div>
+        {% if let Some(s) = countries.suggestion %}<div class="alert info">{{ crate::assets::icon("trend-up")|safe }}<div class="alert-body"><span class="alert-title">Suggested from your server</span><span class="alert-text">{{ s.share }}% of failed logins in the last {{ countries.range }} came from {{ s.country.name }}, and no account logged in from there.</span></div>{% if l.full && !countries.list_locked %}<div class="alert-actions"><button type="submit" class="btn btn-secondary btn-sm" name="country" value="{{ s.country.code }}" data-tip="Add {{ s.country.name }} to the list and apply">{{ crate::assets::icon("plus")|safe }}Add {{ s.country.code }}</button></div>{% endif %}</div>{% endif %}
+      </div>
+      <div class="vstack">
+        {% if let Some(c) = countries.chart %}
+        <div class="chart-head"><span class="legend">{% for k in c.keys %}<span class="legend-item"><span class="key box {{ k.0 }}"></span>{{ k.1 }}</span>{% endfor %}</span><button type="button" class="btn btn-ghost btn-icon btn-sm" data-table-toggle aria-label="Show as a table" data-tip="Show as a table">{{ crate::assets::icon("table")|safe }}</button></div>
+        <div class="chart">{{ c.wide|safe }}{{ c.narrow|safe }}</div>
+        <div class="chart-table table-wrap" hidden><table class="table"><thead><tr><th>{{ c.first_column }}</th>{% for k in c.columns %}<th class="num">{{ k }}</th>{% endfor %}</tr></thead><tbody>{% for row in c.rows %}<tr><td>{{ row.0 }}</td>{% for v in row.1 %}<td class="num">{{ v }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+        {% endif %}
+        {% if let Some(e) = countries.chart_error %}<div class="alert warn">{{ crate::assets::icon("warning-circle-fill")|safe }}<div class="alert-body"><span class="alert-title">The country chart is unavailable</span><span class="alert-text">{{ e }}</span></div></div>{% endif %}
+      </div>
+    </div>
+    <div class="card-foot"><span class="note">Failed logins by country in the last {{ countries.range }}</span>{% if l.full && !(countries.rule_locked && countries.list_locked) %}<button type="submit" class="btn btn-primary">{{ crate::assets::icon("check")|safe }}Save and apply</button>{% endif %}</div>
+    </fieldset>
+  </form>
+  <template id="country-chip"><span class="chip-x"><img class="flag" src="" alt=""><span class="chip-text"></span><label class="chip-toggle" data-tip="Remove"><input type="checkbox" class="sr-only" value="" checked aria-label=""><span class="on">{{ crate::assets::icon("x")|safe }}</span><span class="off">{{ crate::assets::icon("arrow-counter-clockwise")|safe }}</span></label></span></template>
+</section>
+<section class="card">
+  <header class="card-head"><h2 class="card-title">{{ crate::assets::icon("sliders-horizontal")|safe }}<span>Rules</span></h2><span class="card-actions">{% call m::help("The same rules apply to SFTP and web logins; hover a rule to see what it sets") %}{% endcall %}</span></header>
+  <form method="post" action="/bans/rules" hx-confirm="Apply these ban rules now?">
+    <input type="hidden" name="csrf" value="{{ l.csrf }}"><input type="hidden" name="maxtime" value="{{ maxtime }}">
+    <fieldset {% if !l.full %}disabled{% endif %}>
+    <div class="card-body stack">
+      <div class="chip-row">
+        <label class="chip-select" data-tip="Failed logins before a ban (maxretry)">{{ crate::assets::icon("x-circle")|safe }}<select name="maxretry" aria-label="Failed logins before a ban">{% for c in failures %}<option value="{{ c.value }}"{% if c.selected %} selected{% endif %}>{{ c.label }}</option>{% endfor %}</select><span class="caret">{{ crate::assets::icon("caret-down")|safe }}</span></label>
+        <label class="chip-select" data-tip="Failures count within this window (findtime)">{{ crate::assets::icon("clock")|safe }}<select name="findtime" aria-label="Window for counting failures">{% for c in window %}<option value="{{ c.value }}"{% if c.selected %} selected{% endif %}>{{ c.label }}</option>{% endfor %}</select><span class="caret">{{ crate::assets::icon("caret-down")|safe }}</span></label>
+        <label class="chip-select" data-tip="How long a first ban lasts (bantime)">{{ crate::assets::icon("prohibit")|safe }}<select name="bantime" aria-label="Ban length">{% for c in length %}<option value="{{ c.value }}"{% if c.selected %} selected{% endif %}>{{ c.label }}</option>{% endfor %}</select><span class="caret">{{ crate::assets::icon("caret-down")|safe }}</span></label>
+        <label class="chip-select" data-tip="Each repeat ban lasts twice as long, up to this (bantime.increment and bantime.maxtime)">{{ crate::assets::icon("repeat")|safe }}<select name="repeat" aria-label="Repeat bans">{% for c in repeat %}<option value="{{ c.value }}"{% if c.selected %} selected{% endif %}>{{ c.label }}</option>{% endfor %}</select><span class="caret">{{ crate::assets::icon("caret-down")|safe }}</span></label>
+      </div>
+      <div class="chip-row"><span class="field-label">Never ban{% call m::help("Addresses and networks fail2ban never bans (ignoreip); localhost is always among them") %}{% endcall %}</span>
+        {% for net in ignore %}<span class="chip-x"><span class="chip-text">{{ net }}</span><label class="chip-toggle" data-tip="Remove"><input type="checkbox" class="sr-only" name="ignoreip" value="{{ net }}" checked aria-label="Keep {{ net }}"><span class="on">{{ crate::assets::icon("x")|safe }}</span><span class="off">{{ crate::assets::icon("arrow-counter-clockwise")|safe }}</span></label></span>{% endfor %}
+        {% if l.full %}<details class="dropdown start"><summary class="chip-add" data-tip="Add an address or network">{{ crate::assets::icon("plus")|safe }}Add</summary><div class="dropdown-panel"><label class="field"><span class="field-label">Address or network</span><input class="input mono" name="ignoreip" placeholder="192.168.1.0/24" autocomplete="off" data-chip-input="never-ban-chip"></label><span class="field-hint">Added when you save</span></div></details>{% else if ignore.is_empty() %}<span class="muted">None</span>{% endif %}
+      </div>
+    </div>
+    {% if l.full %}<div class="card-foot"><button type="submit" class="btn btn-primary">{{ crate::assets::icon("check")|safe }}Save and apply</button></div>{% endif %}
+    </fieldset>
+  </form>
+  <template id="never-ban-chip"><span class="chip-x"><span class="chip-text"></span><label class="chip-toggle" data-tip="Remove"><input type="checkbox" class="sr-only" value="" checked aria-label=""><span class="on">{{ crate::assets::icon("x")|safe }}</span><span class="off">{{ crate::assets::icon("arrow-counter-clockwise")|safe }}</span></label></span></template>
+</section>
+{% endblock %}

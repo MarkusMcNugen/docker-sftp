@@ -1,0 +1,5 @@
+  <section class="card">
+    <header class="card-head"><h2 class="card-title">{{ crate::assets::icon(c.icon)|safe }}<span>{{ c.title }}</span></h2><span class="card-actions">{% if c.keys.len() > 1 %}<span class="legend">{% for k in c.keys %}<span class="legend-item"><span class="key box {{ k.0 }}"></span>{{ k.1 }}</span>{% endfor %}</span>{% endif %}<button type="button" class="btn btn-ghost btn-icon btn-sm" data-table-toggle aria-label="Show as a table" data-tip="Show as a table">{{ crate::assets::icon("table")|safe }}</button></span></header>
+    <div class="chart">{{ c.wide|safe }}{{ c.narrow|safe }}</div>
+    <div class="chart-table table-wrap" hidden><table class="table"><thead><tr><th>{{ c.first_column }}</th>{% for k in c.columns %}<th class="num">{{ k }}</th>{% endfor %}</tr></thead><tbody>{% for row in c.rows %}<tr><td>{{ row.0 }}</td>{% for v in row.1 %}<td class="num">{{ v }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+  </section>

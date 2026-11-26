@@ -1,0 +1,11 @@
+{% for r in rows %}
+<tr data-id="{{ r.id }}" data-door="{{ r.door }}" data-kind="{{ r.kind }}">
+  <td class="lead" data-sort="{{ r.time }}"><time datetime="{{ r.when_iso }}">{{ r.when }}</time></td>
+  <td data-label="Account" data-sort="{{ r.account }}">{% if r.account.is_empty() %}<span class="muted" data-tip="Its session began before the history did">Unknown</span>{% else %}<span class="cell-user"><span class="avatar sm {{ crate::pages::tone(r.account) }}">{{ crate::pages::initials(r.account) }}</span><a class="name" href="/activity?account={{ r.account|urlencode }}">{{ r.account }}</a></span>{% endif %}</td>
+  <td data-label="Door" data-sort="{{ r.door }}">{% if r.door == "web" %}<span class="door web" data-tip="File browser">{{ crate::assets::icon("globe-hemisphere-west")|safe }}</span>{% else %}<span class="door" data-tip="SFTP or rsync over SSH">{{ crate::assets::icon("terminal-window")|safe }}</span>{% endif %}</td>
+  <td data-label="Operation" data-sort="{{ r.label }}"><span class="meta{% if r.failed %} bad{% endif %}">{{ crate::assets::icon(r.icon)|safe }}{{ r.label }}</span></td>
+  <td data-label="Path">{% if r.kind == "rename" || r.kind == "link" %}<code>{{ r.path }}</code> to <code>{{ r.other }}</code>{% else if !r.path.is_empty() %}<code>{{ r.path }}</code>{% else if r.other == "publickey" %}<span class="muted">With a key</span>{% else if r.other == "password" %}<span class="muted">With a password</span>{% else %}<span class="muted">{{ r.other }}</span>{% endif %}</td>
+  <td class="opt-sm num" data-label="Size" data-sort="{{ r.bytes }}">{{ r.size }}</td>
+  <td class="opt-md" data-label="From">{% if !r.address.is_empty() %}<code>{{ r.address }}</code>{% endif %}</td>
+</tr>
+{% endfor %}

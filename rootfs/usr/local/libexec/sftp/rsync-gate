@@ -1,15 +1,53 @@
 #!/bin/sh
 # Login shell of accounts allowed to use rsync. sshd runs it inside the
-# account's jail as `rsync-gate -c "<command>"`. Only an rsync server
-# command runs; it is split into words but never globbed or evaluated.
+# account's jail as `rsync-gate -c "<command>"`, with SFTP_RSYNC_MODE and
+# SFTP_UMASK set by the account's Match block. Only an rsync server command
+# runs; for a read-only account only one that sends files, with options
+# that cannot change anything on the server. The command is split into
+# words but never globbed or evaluated.
 set -f
-if [ "$#" -eq 2 ] && [ "$1" = "-c" ]; then
-    case "$2" in
-        "rsync --server "*)
-            # shellcheck disable=SC2086 # the words are rsync's arguments
-            exec $2
-            ;;
-    esac
+
+refuse() {
+    echo "$1" >&2
+    exit 1
+}
+
+case ${SFTP_UMASK:-} in
+    "") ;;
+    [0-7][0-7][0-7] | 0[0-7][0-7][0-7]) umask "$SFTP_UMASK" ;;
+    *) refuse "The umask of this account is not valid." ;;
+esac
+
+if [ "$#" -ne 2 ] || [ "$1" != "-c" ]; then
+    refuse "This service allows sftp and rsync connections only."
 fi
-echo "This service allows sftp and rsync connections only." >&2
-exit 1
+command=$2
+# shellcheck disable=SC2086 # the words are rsync's arguments
+set -- $command
+if [ "${1:-}" != rsync ] || [ "${2:-}" != --server ]; then
+    refuse "This service allows sftp and rsync connections only."
+fi
+
+if [ "${SFTP_RSYNC_MODE:-full}" = readonly ]; then
+    if [ "${3:-}" != --sender ]; then
+        refuse "This account is read-only: rsync may only download."
+    fi
+    shift 3
+    for word; do
+        case $word in
+            .) break ;;
+            --list-only | --numeric-ids | --size-only | --ignore-times | --safe-links | \
+                --copy-unsafe-links | --munge-links | --no-implied-dirs | --one-file-system | \
+                --open-noatime | --old-compress | --new-compress | --from0 | --use-qsort) ;;
+            --info=* | --debug=* | --timeout=* | --checksum-choice=* | --compress-choice=* | \
+                --compress-level=* | --max-size=* | --min-size=* | --modify-window=* | \
+                --block-size=* | --checksum-seed=* | --max-alloc=*) ;;
+            --*) refuse "This account is read-only: rsync option ${word%%=*} is not allowed." ;;
+            -*[!A-Za-z0-9.]*) refuse "This account is read-only: rsync option $word is not allowed." ;;
+            -*) ;;
+            *) refuse "This account is read-only: unexpected rsync argument." ;;
+        esac
+    done
+fi
+# shellcheck disable=SC2086 # the words are rsync's arguments
+exec $command

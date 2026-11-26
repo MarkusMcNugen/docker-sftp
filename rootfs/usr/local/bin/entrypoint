@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 # Container entrypoint: OpenSSH restricted to file transfer, guarded by
-# fail2ban.
+# fail2ban, with an optional admin web UI.
 #
 # Builds the sshd, fail2ban and account configuration from /config and the
-# environment, then supervises rsyslogd, fail2ban and sshd. If any of them
+# environment, then supervises rsyslogd, fail2ban, sshd and, when
+# WEBUI_ENABLED is true, the web UI and its root helper. If any of them
 # exits, the others are stopped and the container exits non-zero, so the
 # restart policy brings back a whole, consistent server.
+#
+# `entrypoint apply` rebuilds the configuration from /config while the
+# server runs, with the environment and arguments the container started
+# with, then has the supervisor restart sshd's listener and reload rsyslog
+# and fail2ban. Open sessions are kept, except those of accounts that are
+# removed, disabled or expired.
 #
 # Arguments shaped like a user spec (name:password[...]) are added to the
 # user list. Any other command runs in place of the server.
@@ -17,15 +24,22 @@ umask 022
 readonly CONFIG=/config
 readonly SSHD_DIR=$CONFIG/sshd
 readonly F2B_DIR=$CONFIG/fail2ban
+readonly WEBUI_DIR=$CONFIG/webui
+readonly AUDIT_DIR=$CONFIG/audit
 readonly HOST_KEY_DIR=$SSHD_DIR/keys
 readonly USER_KEY_DIR=$CONFIG/userkeys
 readonly USERS_CONF=$SSHD_DIR/users.conf
+readonly GROUPS_CONF=$SSHD_DIR/groups.conf
+readonly SETTINGS_CONF=$SSHD_DIR/settings.conf
 readonly USERS_CONF_LEGACY=/etc/sftp-users.conf
 readonly AUTH_KEYS_DIR=/etc/ssh/authorized_keys
 readonly DIST=/usr/local/share/sftp
 readonly LEGACY_HASHES=/usr/local/lib/sftp/legacy-defaults.sha256
 readonly RUN_DIR=/run/sftp
+readonly WEBUI_RUN=/run/sftp-webui
 readonly AUTH_LOG=/var/log/auth.log
+readonly EVENTS_LOG=/var/log/sftp-events.log
+readonly CHROOT_LOG_CONF=/etc/rsyslog.d/sftp-chroots.conf
 readonly SFTP_GROUP=sftpusers
 readonly MANAGED_COMMENT=sftp-managed
 readonly DEFAULT_GID=100
@@ -33,38 +47,92 @@ readonly STRICT_MACS=hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com
 readonly RSYNC_GATE=/usr/local/libexec/sftp/rsync-gate
 readonly RSYNC_JAIL_FILES=(/bin/sh /usr/bin/rsync "$RSYNC_GATE")
 readonly RSYNC_STATE=/var/lib/sftp/rsync-jails
+readonly WEBUI_USER=sftp-webui
+# The file browser: its system account and its run directory, which holds
+# its socket to the root helper; the certificate authority whose
+# short-lived certificates its sftp sessions log in with; and the sshd
+# that trusts them, which listens on loopback only.
+readonly FILES_USER=sftp-files
+readonly FILES_RUN=/run/sftp-files
+readonly FILES_CA=$HOST_KEY_DIR/files_ca
+readonly FILES_SSHD_CONF=/etc/ssh/sshd_config.files
+readonly FILES_SSHD_PORT=2299
+readonly WEBUI_BIN=/usr/local/bin/sftp-webui
+readonly HELPER_BIN=/usr/local/libexec/sftp/sftp-helper
+readonly SAVED_ENV=$RUN_DIR/env
+readonly SAVED_ARGS=$RUN_DIR/args
+readonly APPLY_LOG=$RUN_DIR/apply.log
 
 readonly RE_USER='^[A-Za-z0-9._][A-Za-z0-9._-]{0,31}$'
 readonly RE_SPEC_HINT='^[^:[:space:]]+:'
 readonly RE_SKIP='^[[:space:]]*(#.*)?$'
 
-FAIL2BAN_ENABLED=${FAIL2BAN_ENABLED:-true}
-SFTP_LOG_TRANSFERS=${SFTP_LOG_TRANSFERS:-false}
-SFTP_UMASK=${SFTP_UMASK:-}
-SFTP_PORT=${SFTP_PORT:-}
-SFTP_USERS=${SFTP_USERS:-}
-SFTP_USERS_FILE=${SFTP_USERS_FILE:-}
-SFTP_CRYPTO_POLICY=${SFTP_CRYPTO_POLICY:-modern}
-# rsyslog.conf reads this from the environment; 0 means no cap.
-SFTP_AUTH_LOG_MAX_BYTES=${SFTP_AUTH_LOG_MAX_BYTES:-10485760}
-# Accounts allowed to use rsync, besides those whose line ends in :rsync.
-SFTP_RSYNC_USERS=${SFTP_RSYNC_USERS:-}
-SFTP_COMMAND=internal-sftp  # the server command of sftp sessions, with -l and -u
+# Variables read from the container environment. Start saves them in
+# $SAVED_ENV, so `entrypoint apply` works with the same values.
+readonly ENV_KEYS=(FAIL2BAN_ENABLED SFTP_PORT SFTP_LOG_TRANSFERS SFTP_UMASK SFTP_CRYPTO_POLICY
+    SFTP_AUTH_LOG_MAX_BYTES SFTP_USERS SFTP_USERS_FILE SFTP_RSYNC_USERS TZ WEBUI_ENABLED WEBUI_PORT
+    WEBUI_PLAIN_HTTP WEBUI_TRUSTED_PROXIES WEBUI_TRUSTED_NETWORKS WEBUI_ADMIN_FILE
+    SFTP_COUNTRY_RULE SFTP_COUNTRIES MAXMIND_ACCOUNT_ID MAXMIND_LICENSE_KEY WEBUI_FILES_ENABLED WEBUI_FILES_PORT
+    FILES_SHARE FILES_SHARE_DAYS FILES_SHARE_MAX_DAYS FILES_SHARE_PASSWORD)
+# Settings settings.conf may hold. A value from the environment wins.
+readonly SETTING_KEYS=(SFTP_PORT SFTP_LOG_TRANSFERS SFTP_UMASK SFTP_CRYPTO_POLICY SFTP_AUTH_LOG_MAX_BYTES
+    SFTP_COUNTRY_RULE SFTP_COUNTRIES FILES_SHARE FILES_SHARE_DAYS FILES_SHARE_MAX_DAYS FILES_SHARE_PASSWORD)
 
-SPECS=()           # raw user specs, in the order they were found
-USERS=()           # validated account names, first definition wins
-declare -A U_PASS U_ENC U_UID U_GID U_DIRS U_RSYNC
-SSHD_OPTS=()       # -o options derived from the environment
-SSHD_LEGACY=false  # true when /config/sshd/sshd_config replaces ours
-LOG_SOCKETS=()     # per-chroot syslog sockets rsyslog is asked to create
+# Account permissions, in canonical order, and the presets users.conf names.
+readonly PERMS_ALL=(list download upload delete rename mkdir attributes links)
+readonly PERMS_FULL=list+download+upload+delete+rename+mkdir+attributes+links
+readonly PERMS_READONLY=list+download
+readonly PERMS_UPLOADONLY=list+upload+rename+mkdir+attributes
+# Requests of the sftp protocol refused for each permission an account
+# lacks. An account without upload runs internal-sftp read-only (-R).
+declare -Ar PERM_REQUESTS=(
+    [list]="opendir,readdir"
+    [download]="read,copy-data"
+    [delete]="remove,rmdir"
+    [rename]="rename,posix-rename"
+    [mkdir]="mkdir"
+    [attributes]="setstat,fsetstat,lsetstat"
+    [links]="symlink,hardlink"
+)
+
+MODE=start                  # apply for `entrypoint apply`
+LOG_COPY=""                 # file that receives a copy of every message
+SFTP_COMMAND=internal-sftp  # the server command of sftp sessions, with -l and -u
+WEBUI_UID=""
+WEBUI_GID=""
+FILES_UID=""
+FILES_GID=""
+
+SPECS=()            # raw user specs, in the order they were found
+SPEC_SOURCES=()     # where each spec came from
+USERS=()            # validated account names, first definition wins
+declare -A U_PASS U_ENC U_UID U_GID U_DIRS U_RSYNC U_RSYNC_ENV U_PERMS U_DISABLED U_EXPIRES U_FROM U_UMASK U_SOURCE
+declare -A U_WEB       # accounts that may sign in to the file browser
+declare -A U_PERMS_SET # accounts whose own line names their permissions
+declare -A U_GROUPS    # each account's groups, space-separated, in the order its line names them
+declare -A U_MANAGE    # accounts and @groups whose files an account may open, space-separated
+declare -A U_NOSHARE U_SHAREDAYS U_SHAREPASSWORD # share link limits, from its line and every group
+GROUP_NAMES=()      # groups in groups.conf, in file order
+declare -A G_SEEN G_GID G_PERMS G_RSYNC G_WEB G_DISABLED G_EXPIRES G_FROM G_UMASK G_MANAGE
+declare -A G_NOSHARE G_SHAREDAYS G_SHAREPASSWORD
+declare -A FROM_ENV    # ENV_KEYS the container environment sets, with their values
+declare -A RSYNC_OK    # accounts whose jail holds rsync
+OPT_PERMS="" OPT_PERMS_SET="" OPT_RSYNC="" OPT_WEB="" OPT_DISABLED="" OPT_EXPIRES="" OPT_FROM="" OPT_UMASK=""
+OPT_GROUPS="" OPT_MANAGE="" OPT_NOSHARE="" OPT_SHAREDAYS="" OPT_SHAREPASSWORD="" PERMS_OUT=""
+SSHD_OPTS=()        # -o options derived from the environment
+SSHD_LEGACY=false   # true when /config/sshd/sshd_config replaces ours
+LOG_SOCKETS=()      # per-chroot syslog sockets rsyslog is asked to create
 PIDS=()
 declare -A PROC_NAME REAPED
 STOPPING=false
+RELOAD_PENDING=false
 
 log() {
-    local now
+    local now line
     printf -v now '%(%Y-%m-%dT%H:%M:%S%z)T' -1
-    printf '%s entrypoint: %s\n' "$now" "$*"
+    printf -v line '%s entrypoint: %s' "$now" "$*"
+    printf '%s\n' "$line"
+    if [[ -n $LOG_COPY ]]; then printf '%s\n' "$line" >>"$LOG_COPY"; fi
 }
 info() { log "$*"; }
 warn() { log "warning: $*" >&2; }
@@ -84,17 +152,112 @@ is_true() {
     esac
 }
 
+is_member() {
+    local item=$1 x
+    shift
+    for x; do
+        if [[ $x == "$item" ]]; then return 0; fi
+    done
+    return 1
+}
+
 # ---------------------------------------------------------------------------
-# Image-owned configuration is restored on every start, so a restarted
-# container never keeps a file that has since been removed from /config.
+# Environment and settings.conf
+# ---------------------------------------------------------------------------
+# Records which ENV_KEYS the environment sets. In apply mode the environment
+# saved at start replaces this process's own, which the helper starts empty.
+capture_environment() {
+    local key kv
+    if [[ $MODE == apply ]]; then
+        for key in "${ENV_KEYS[@]}"; do unset "$key"; done
+        while IFS= read -r -d '' kv; do
+            key=${kv%%=*}
+            if is_member "$key" "${ENV_KEYS[@]}"; then printf -v "$key" '%s' "${kv#*=}"; fi
+        done <"$SAVED_ENV"
+    fi
+    for key in "${ENV_KEYS[@]}"; do
+        if [[ -v $key ]]; then FROM_ENV[$key]=${!key}; fi
+    done
+}
+
+save_environment() {
+    local key
+    (
+        umask 077
+        : >"$SAVED_ENV"
+        : >"$SAVED_ARGS"
+    )
+    for key in "${!FROM_ENV[@]}"; do printf '%s=%s\0' "$key" "${FROM_ENV[$key]}" >>"$SAVED_ENV"; done
+    if (($#)); then printf '%s\0' "$@" >"$SAVED_ARGS"; fi
+}
+
+# key=value lines for SETTING_KEYS, written by the web UI or by hand. A key
+# the container environment sets keeps the environment's value.
+load_settings_file() {
+    [[ -f $SETTINGS_CONF ]] || return 0
+    local line key value n=0
+    while IFS= read -r line || [[ -n $line ]]; do
+        n=$((n + 1))
+        line=${line%$'\r'}
+        [[ $line =~ $RE_SKIP ]] && continue
+        [[ $line =~ ^([A-Z0-9_]+)=(.*)$ ]] || die "$SETTINGS_CONF line $n: expected NAME=value"
+        key=${BASH_REMATCH[1]}
+        value=${BASH_REMATCH[2]}
+        is_member "$key" "${SETTING_KEYS[@]}" || die "$SETTINGS_CONF line $n: $key cannot be set in this file"
+        [[ -n ${FROM_ENV[$key]+set} ]] && continue
+        printf -v "$key" '%s' "$value"
+    done <"$SETTINGS_CONF"
+}
+
+apply_defaults() {
+    FAIL2BAN_ENABLED=${FAIL2BAN_ENABLED:-true}
+    SFTP_LOG_TRANSFERS=${SFTP_LOG_TRANSFERS:-false}
+    SFTP_UMASK=${SFTP_UMASK:-}
+    SFTP_PORT=${SFTP_PORT:-}
+    SFTP_USERS=${SFTP_USERS:-}
+    SFTP_USERS_FILE=${SFTP_USERS_FILE:-}
+    SFTP_CRYPTO_POLICY=${SFTP_CRYPTO_POLICY:-modern}
+    # 0 means no cap.
+    SFTP_AUTH_LOG_MAX_BYTES=${SFTP_AUTH_LOG_MAX_BYTES:-10485760}
+    # Accounts allowed to use rsync, besides those whose line names it.
+    SFTP_RSYNC_USERS=${SFTP_RSYNC_USERS:-}
+    WEBUI_ENABLED=${WEBUI_ENABLED:-false}
+    WEBUI_PORT=${WEBUI_PORT:-8443}
+    WEBUI_PLAIN_HTTP=${WEBUI_PLAIN_HTTP:-false}
+    WEBUI_TRUSTED_PROXIES=${WEBUI_TRUSTED_PROXIES:-}
+    WEBUI_TRUSTED_NETWORKS=${WEBUI_TRUSTED_NETWORKS:-}
+    WEBUI_ADMIN_FILE=${WEBUI_ADMIN_FILE:-}
+    WEBUI_FILES_ENABLED=${WEBUI_FILES_ENABLED:-false}
+    WEBUI_FILES_PORT=${WEBUI_FILES_PORT:-8444}
+    # Country rules: off, block (the listed countries) or allow (only them).
+    # The list starts with Project Honey Pot's top attack origins; an empty
+    # value set on purpose stays empty.
+    SFTP_COUNTRY_RULE=${SFTP_COUNTRY_RULE:-off}
+    SFTP_COUNTRIES=${SFTP_COUNTRIES-CN IN BR RU VN}
+    # bash reads the time zone of its own timestamps from the environment.
+    if [[ -v TZ ]]; then export TZ; fi
+    WEBUI_UID=$(id -u "$WEBUI_USER")
+    WEBUI_GID=$(id -g "$WEBUI_USER")
+    FILES_UID=$(id -u "$FILES_USER")
+    FILES_GID=$(id -g "$FILES_USER")
+}
+
+# ---------------------------------------------------------------------------
+# Image-owned configuration is restored on every start and apply, so the
+# running configuration never keeps a file since removed from /config.
+# Authorized keys and $RUN_DIR stay in place while the server runs.
 # ---------------------------------------------------------------------------
 restore_image_configs() {
     cp -f "$DIST/sshd_config" /etc/ssh/sshd_config
-    rm -rf /etc/ssh/sshd_config.d "$AUTH_KEYS_DIR" /etc/fail2ban /etc/rsyslog.d "$RUN_DIR"
-    install -d -m 755 /etc/ssh/sshd_config.d "$AUTH_KEYS_DIR" /etc/rsyslog.d "$RUN_DIR" /run/sshd
+    rm -rf /etc/ssh/sshd_config.d /etc/fail2ban /etc/rsyslog.d
+    install -d -m 755 /etc/ssh/sshd_config.d /etc/rsyslog.d /run/sshd
+    if [[ $MODE == start ]]; then
+        rm -rf "$AUTH_KEYS_DIR" "$RUN_DIR" "$WEBUI_RUN" "$FILES_RUN"
+        install -d -m 755 "$AUTH_KEYS_DIR" "$RUN_DIR"
+        : >"$AUTH_LOG"
+    fi
     cp -a "$DIST/fail2ban" /etc/fail2ban
     mkdir -p "$SSHD_DIR/sshd_config.d" "$HOST_KEY_DIR" "$USER_KEY_DIR"
-    : >"$AUTH_LOG"
 }
 
 # Files that 1.x images copied into /config. One whose hash is listed in
@@ -117,26 +280,33 @@ retire() {
 # Users
 # ---------------------------------------------------------------------------
 add_specs_from_file() {
-    local file=$1 line
+    local file=$1 source=$2 line
     while IFS= read -r line || [[ -n $line ]]; do
         line=${line%"${line##*[![:space:]]}"}
         [[ $line =~ $RE_SKIP ]] && continue
         SPECS+=("$line")
+        SPEC_SOURCES+=("$source")
     done <"$file"
 }
 
 collect_specs() {
-    [[ -f $USERS_CONF_LEGACY ]] && add_specs_from_file "$USERS_CONF_LEGACY"
-    [[ -f $USERS_CONF ]] && add_specs_from_file "$USERS_CONF"
+    if [[ -f $USERS_CONF_LEGACY ]]; then add_specs_from_file "$USERS_CONF_LEGACY" legacy; fi
+    if [[ -f $USERS_CONF ]]; then add_specs_from_file "$USERS_CONF" users.conf; fi
     if [[ -n $SFTP_USERS_FILE ]]; then
         [[ -r $SFTP_USERS_FILE ]] || die "SFTP_USERS_FILE=$SFTP_USERS_FILE is not readable"
-        add_specs_from_file "$SFTP_USERS_FILE"
+        add_specs_from_file "$SFTP_USERS_FILE" users-file
     fi
     local arg
-    for arg in "$@"; do SPECS+=("$arg"); done
+    for arg in "$@"; do
+        SPECS+=("$arg")
+        SPEC_SOURCES+=(arguments)
+    done
     local -a from_env=()
     read -r -a from_env <<<"$SFTP_USERS"
-    SPECS+=("${from_env[@]}")
+    for arg in "${from_env[@]}"; do
+        SPECS+=("$arg")
+        SPEC_SOURCES+=(environment)
+    done
 }
 
 # Empty, or a decimal id from 1 to 2^32-2. Leading zeros are decimal too.
@@ -145,16 +315,162 @@ valid_id() {
     [[ $1 =~ ^[0-9]{1,10}$ ]] && ((10#$1 > 0 && 10#$1 < 4294967295))
 }
 
-# name:password[:e][:uid[:gid[:dir1,dir2,...]]]
+# A calendar date in ISO 8601 form: year, month and day.
+valid_date() {
+    [[ $1 =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || return 1
+    [[ $(date -u -d "$1" +%F 2>/dev/null) == "$1" ]]
+}
+
+# Prints the canonical form of each address or network, comma-separated, or
+# why the first invalid one is refused.
+canonical_networks() {
+    python3 -I -c '
+import ipaddress, sys
+nets = []
+for arg in sys.argv[1:]:
+    try:
+        nets.append(str(ipaddress.ip_network(arg, strict=True)))
+    except ValueError as err:
+        print(f"from={arg} is not an address or network: {err}")
+        sys.exit(1)
+print(",".join(nets))
+' "$@"
+}
+
+# Sets PERMS_OUT to the permissions of a perms= list in canonical order.
+# who names the account or group in messages.
+canonical_perms() {
+    local who=$1 list=$2 p
+    local -a given=()
+    local -A seen=()
+    IFS=+ read -r -a given <<<"$list"
+    ((${#given[@]})) || die "$who: perms= needs at least one permission"
+    for p in "${given[@]}"; do
+        is_member "$p" "${PERMS_ALL[@]}" || die "$who: unknown permission \"$p\" (known: ${PERMS_ALL[*]})"
+        [[ -z ${seen[$p]:-} ]] || die "$who: permission $p is given twice"
+        seen[$p]=1
+    done
+    PERMS_OUT=""
+    for p in "${PERMS_ALL[@]}"; do
+        if [[ -n ${seen[$p]:-} ]]; then PERMS_OUT+=${PERMS_OUT:++}$p; fi
+    done
+}
+
+has_perm() { [[ +$1+ == *+$2+* ]]; }
+
+# Parses comma-separated options into OPT_PERMS (full unless given),
+# OPT_PERMS_SET, OPT_RSYNC, OPT_WEB, OPT_DISABLED, OPT_EXPIRES, OPT_FROM,
+# OPT_UMASK, OPT_GROUPS, OPT_MANAGE, OPT_NOSHARE, OPT_SHAREDAYS and
+# OPT_SHAREPASSWORD. who names the account or group in messages; kind is
+# user or group, and only an account may name group=.
+parse_options() {
+    local who=$1 options=$2 kind=$3 opt preset="" value p
+    local -a opts=() from=()
+    OPT_PERMS=$PERMS_FULL OPT_PERMS_SET="" OPT_RSYNC="" OPT_WEB="" OPT_DISABLED="" OPT_EXPIRES="" OPT_FROM="" OPT_UMASK=""
+    OPT_GROUPS="" OPT_MANAGE="" OPT_NOSHARE="" OPT_SHAREDAYS="" OPT_SHAREPASSWORD=""
+    IFS=, read -r -a opts <<<"$options"
+    for opt in "${opts[@]}"; do
+        case $opt in
+            "") ;;
+            rsync)
+                [[ -z $OPT_RSYNC ]] || die "$who: option rsync is given twice"
+                OPT_RSYNC=rsync
+                ;;
+            web)
+                [[ -z $OPT_WEB ]] || die "$who: option web is given twice"
+                OPT_WEB=web
+                ;;
+            full | readonly | uploadonly | perms=*)
+                [[ -z $preset ]] || die "$who: give only one of full, readonly, uploadonly and perms="
+                preset=$opt
+                ;;
+            disabled)
+                [[ -z $OPT_DISABLED ]] || die "$who: option disabled is given twice"
+                OPT_DISABLED=disabled
+                ;;
+            expires=*)
+                [[ -z $OPT_EXPIRES ]] || die "$who: option expires= is given twice"
+                value=${opt#expires=}
+                valid_date "$value" || die "$who: expires=$value is not a date such as 2027-01-31"
+                OPT_EXPIRES=$value
+                ;;
+            from=*)
+                [[ -n ${opt#from=} ]] || die "$who: from= needs an address or network"
+                from+=("${opt#from=}")
+                ;;
+            umask=*)
+                [[ -z $OPT_UMASK ]] || die "$who: option umask= is given twice"
+                value=${opt#umask=}
+                [[ $value =~ ^0?[0-7]{3}$ ]] || die "$who: umask=$value is not an octal umask such as 022"
+                OPT_UMASK=$value
+                ;;
+            group=*)
+                [[ $kind == user ]] || die "$who: a group cannot belong to a group"
+                value=${opt#group=}
+                [[ $value =~ $RE_USER ]] || die "$who: group=$value is not a group name"
+                [[ " $OPT_GROUPS " != *" $value "* ]] || die "$who: group $value is given twice"
+                OPT_GROUPS+=${OPT_GROUPS:+ }$value
+                ;;
+            manage=*)
+                value=${opt#manage=}
+                [[ ${value#@} =~ $RE_USER ]] || die "$who: manage=$value is not an account name or @group"
+                [[ " $OPT_MANAGE " != *" $value "* ]] || die "$who: manage=$value is given twice"
+                OPT_MANAGE+=${OPT_MANAGE:+ }$value
+                ;;
+            noshare)
+                [[ -z $OPT_NOSHARE ]] || die "$who: option noshare is given twice"
+                OPT_NOSHARE=noshare
+                ;;
+            sharedays=*)
+                [[ -z $OPT_SHAREDAYS ]] || die "$who: option sharedays= is given twice"
+                value=${opt#sharedays=}
+                [[ $value =~ ^[1-9][0-9]{0,8}$ ]] || die "$who: sharedays=$value is not a number of days from 1 to 999999999"
+                OPT_SHAREDAYS=$value
+                ;;
+            sharepassword)
+                [[ -z $OPT_SHAREPASSWORD ]] || die "$who: option sharepassword is given twice"
+                OPT_SHAREPASSWORD=sharepassword
+                ;;
+            *) die "$who: unknown option \"$opt\" (see the users.conf reference)" ;;
+        esac
+    done
+    case $preset in
+        "") ;;
+        full) OPT_PERMS=$PERMS_FULL ;;
+        readonly) OPT_PERMS=$PERMS_READONLY ;;
+        uploadonly) OPT_PERMS=$PERMS_UPLOADONLY ;;
+        *)
+            canonical_perms "$who" "${preset#perms=}"
+            OPT_PERMS=$PERMS_OUT
+            ;;
+    esac
+    if [[ -n $preset ]]; then OPT_PERMS_SET=1; fi
+    if ! has_perm "$OPT_PERMS" upload; then
+        for p in delete rename mkdir attributes links; do
+            if has_perm "$OPT_PERMS" "$p"; then
+                die "$who: without upload the account is read-only, so it cannot have $p"
+            fi
+        done
+    fi
+    if [[ -n $OPT_RSYNC && $OPT_PERMS != "$PERMS_FULL" && $OPT_PERMS != "$PERMS_READONLY" ]]; then
+        die "$who: rsync works only with full or read-only permissions"
+    fi
+    if ((${#from[@]})); then
+        if ! OPT_FROM=$(canonical_networks "${from[@]}" 2>&1); then die "$who: $OPT_FROM"; fi
+    fi
+}
+
+# name:password[:e][:uid[:gid[:dir1,dir2,...[:options]]]]
+# The options are the rest of the line, so a from= address may hold colons.
 # The password never appears in a message: only the name is quoted.
 parse_spec() {
-    local spec=$1 i=2 enc=""
+    local spec=$1 source=$2 i=2 enc=""
     local -a f=()
     IFS=: read -r -a f <<<"$spec"
     local name=${f[0]:-} pass=${f[1]:-}
 
     [[ $name =~ $RE_USER ]] || die "invalid user name \"$name\" (POSIX names, at most 32 characters)"
-    [[ $spec == *:* ]] || die "user \"$name\": expected name:password[:e][:uid[:gid[:dirs]]]"
+    [[ $spec == *:* ]] || die "user \"$name\": expected name:password[:e][:uid[:gid[:dirs[:options]]]]"
     local entry comment
     if entry=$(getent passwd "$name"); then
         IFS=: read -r _ _ _ _ comment _ <<<"$entry"
@@ -165,14 +481,23 @@ parse_spec() {
         enc=1
         i=3
     fi
-    local uid=${f[i]:-} gid=${f[i + 1]:-} dirs=${f[i + 2]:-} rsync=${f[i + 3]:-}
-    ((${#f[@]} <= i + 4)) || die "user \"$name\": too many fields"
-    [[ -z $rsync || $rsync == rsync ]] || die "user \"$name\": the field after the directories must be rsync or empty"
+    local uid=${f[i]:-} gid=${f[i + 1]:-} dirs=${f[i + 2]:-} options=$spec n
+    for ((n = 0; n < i + 3; n++)); do
+        if [[ $options != *:* ]]; then
+            options=""
+            break
+        fi
+        options=${options#*:}
+    done
     ((${#pass} <= 255)) || die "user \"$name\": password longer than 255 characters"
     valid_id "$uid" || die "user \"$name\": uid \"$uid\" must be a number from 1 to 4294967294 (0 is root)"
     valid_id "$gid" || die "user \"$name\": gid \"$gid\" must be a number from 1 to 4294967294 (0 is root)"
     [[ -n $uid ]] && uid=$((10#$uid))
     [[ -n $gid ]] && gid=$((10#$gid))
+    [[ $uid != "$WEBUI_UID" ]] || die "user \"$name\": uid $uid belongs to the image's web UI account"
+    [[ $gid != "$WEBUI_GID" ]] || die "user \"$name\": gid $gid belongs to the image's web UI account"
+    [[ $uid != "$FILES_UID" ]] || die "user \"$name\": uid $uid belongs to the image's file browser account"
+    [[ $gid != "$FILES_GID" ]] || die "user \"$name\": gid $gid belongs to the image's file browser account"
     if [[ -n $enc && -n $pass && $pass != \$* ]]; then
         warn "user \"$name\": the password is marked :e but does not look like a crypt hash"
     fi
@@ -182,6 +507,7 @@ parse_spec() {
     IFS=, read -r -a parts <<<"$dirs"
     for d in "${parts[@]}"; do
         [[ -n $d ]] || continue
+        [[ $d != *[[:cntrl:]]* ]] || die "user \"$name\": directory names may not contain control characters"
         [[ $d != /* ]] || die "user \"$name\": directory \"$d\" must be relative to the home directory"
         local -a comps=()
         IFS=/ read -r -a comps <<<"$d"
@@ -189,6 +515,8 @@ parse_spec() {
             [[ $c != . && $c != .. ]] || die "user \"$name\": directory \"$d\" may not contain . or .."
         done
     done
+    parse_options "user \"$name\"" "$options" user
+    [[ " $OPT_MANAGE " != *" $name "* ]] || die "user \"$name\": manage= names the account itself"
 
     if [[ -n ${U_PASS[$name]+set} ]]; then
         warn "user \"$name\" is defined more than once; keeping the first definition"
@@ -200,21 +528,171 @@ parse_spec() {
     U_UID[$name]=$uid
     U_GID[$name]=$gid
     U_DIRS[$name]=$dirs
-    U_RSYNC[$name]=$rsync
+    U_RSYNC[$name]=$OPT_RSYNC
+    U_WEB[$name]=$OPT_WEB
+    U_RSYNC_ENV[$name]=""
+    U_PERMS[$name]=$OPT_PERMS
+    U_PERMS_SET[$name]=$OPT_PERMS_SET
+    U_GROUPS[$name]=$OPT_GROUPS
+    U_MANAGE[$name]=$OPT_MANAGE
+    U_DISABLED[$name]=$OPT_DISABLED
+    U_EXPIRES[$name]=$OPT_EXPIRES
+    U_FROM[$name]=$OPT_FROM
+    U_UMASK[$name]=$OPT_UMASK
+    U_NOSHARE[$name]=$OPT_NOSHARE
+    U_SHAREDAYS[$name]=$OPT_SHAREDAYS
+    U_SHAREPASSWORD[$name]=$OPT_SHAREPASSWORD
+    U_SOURCE[$name]=$source
 }
 
-# Adds the accounts SFTP_RSYNC_USERS names (* for every account) to those
-# marked :rsync on their own line.
+rsync_compatible() {
+    [[ ${U_PERMS[$1]} == "$PERMS_FULL" || ${U_PERMS[$1]} == "$PERMS_READONLY" ]]
+}
+
+# A groups.conf line, name[:gid[:options]]. The options are an account
+# line's, except group=; everything after the gid is options, so a from=
+# address may hold colons.
+parse_group() {
+    local line=$1 name gid="" options=""
+    name=${line%%:*}
+    [[ $name =~ $RE_USER ]] || die "$GROUPS_CONF: invalid group name \"$name\" (letters, digits, '.', '_' and '-', at most 32)"
+    if [[ $line == *:* ]]; then
+        gid=${line#*:}
+        if [[ $gid == *:* ]]; then
+            options=${gid#*:}
+            gid=${gid%%:*}
+        fi
+    fi
+    [[ -z ${G_SEEN[$name]:-} ]] || die "group \"$name\" is defined twice in $GROUPS_CONF"
+    valid_id "$gid" || die "group \"$name\": gid \"$gid\" must be a number from 1 to 4294967294 (0 is root)"
+    [[ -n $gid ]] && gid=$((10#$gid))
+    [[ $gid != "$WEBUI_GID" ]] || die "group \"$name\": gid $gid belongs to the image's web UI account"
+    [[ $gid != "$FILES_GID" ]] || die "group \"$name\": gid $gid belongs to the image's file browser account"
+    parse_options "group \"$name\"" "$options" group
+    GROUP_NAMES+=("$name")
+    G_SEEN[$name]=1
+    G_GID[$name]=$gid
+    G_PERMS[$name]=${OPT_PERMS_SET:+$OPT_PERMS}
+    G_RSYNC[$name]=$OPT_RSYNC
+    G_WEB[$name]=$OPT_WEB
+    G_DISABLED[$name]=$OPT_DISABLED
+    G_EXPIRES[$name]=$OPT_EXPIRES
+    G_FROM[$name]=$OPT_FROM
+    G_UMASK[$name]=$OPT_UMASK
+    G_MANAGE[$name]=$OPT_MANAGE
+    G_NOSHARE[$name]=$OPT_NOSHARE
+    G_SHAREDAYS[$name]=$OPT_SHAREDAYS
+    G_SHAREPASSWORD[$name]=$OPT_SHAREPASSWORD
+}
+
+load_groups() {
+    [[ -f $GROUPS_CONF ]] || return 0
+    local line
+    while IFS= read -r line || [[ -n $line ]]; do
+        line=${line%"${line##*[![:space:]]}"}
+        [[ $line =~ $RE_SKIP ]] && continue
+        parse_group "$line"
+    done <"$GROUPS_CONF"
+}
+
+# Keeps the manage= targets that exist: a configured account other than the
+# account itself, or an @group in groups.conf. A missing target grants nothing.
+resolve_manage() {
+    local name=$1 target kept=""
+    local -a targets=()
+    read -r -a targets <<<"$2"
+    for target in "${targets[@]}"; do
+        [[ $target != "$name" ]] || continue
+        if [[ $target == @* && -n ${G_SEEN[${target#@}]:-} ]] || [[ $target != @* && -n ${U_PASS[$target]+set} ]]; then
+            kept+=${kept:+ }$target
+        else
+            warn "user $name: manage=$target names no account or group, so it grants nothing"
+        fi
+    done
+    U_MANAGE[$name]=$kept
+}
+
+# An account takes from its groups what its own line leaves unset. Grants add
+# up: permissions, rsync, allowed networks and the files it may manage come
+# from every group that gives them. Limits take the strictest: disabled when
+# any group is, the earliest end date, and every umask bit any group sets. The
+# first listed group with a gid gives the account its primary group.
+# Permissions, networks, an end date, a umask or a gid on the account's own
+# line win over its groups. Share link limits all apply, the account's own
+# and every group's: noshare or sharepassword from any of them, and the
+# shortest sharedays=.
+resolve_groups() {
+    local name group perms nets umask expires gid manage item
+    local -a groups=() list=()
+    for name in "${USERS[@]}"; do
+        manage=${U_MANAGE[$name]}
+        read -r -a groups <<<"${U_GROUPS[$name]}"
+        perms="" nets="" umask="" expires="" gid=""
+        for group in "${groups[@]}"; do
+            [[ -n ${G_SEEN[$group]:-} ]] || die "user \"$name\": group $group is not in $GROUPS_CONF"
+            if [[ -n ${G_PERMS[$group]} ]]; then perms+=${perms:++}${G_PERMS[$group]}; fi
+            if [[ -n ${G_RSYNC[$group]} ]]; then U_RSYNC[$name]=rsync; fi
+            if [[ -n ${G_WEB[$group]} ]]; then U_WEB[$name]=web; fi
+            if [[ -n ${G_DISABLED[$group]} ]]; then U_DISABLED[$name]=disabled; fi
+            if [[ -n ${G_NOSHARE[$group]} ]]; then U_NOSHARE[$name]=noshare; fi
+            if [[ -n ${G_SHAREPASSWORD[$group]} ]]; then U_SHAREPASSWORD[$name]=sharepassword; fi
+            if [[ -n ${G_SHAREDAYS[$group]} && (-z ${U_SHAREDAYS[$name]} || ${G_SHAREDAYS[$group]} -lt ${U_SHAREDAYS[$name]}) ]]; then
+                U_SHAREDAYS[$name]=${G_SHAREDAYS[$group]}
+            fi
+            IFS=, read -r -a list <<<"${G_FROM[$group]}"
+            for item in "${list[@]}"; do
+                if [[ ,$nets, != *,$item,* ]]; then nets+=${nets:+,}$item; fi
+            done
+            if [[ -n ${G_UMASK[$group]} ]]; then umask=$(printf '%03o' $((8#${umask:-0} | 8#${G_UMASK[$group]}))); fi
+            if [[ -n ${G_EXPIRES[$group]} && (-z $expires || ${G_EXPIRES[$group]} < "$expires") ]]; then
+                expires=${G_EXPIRES[$group]}
+            fi
+            if [[ -z $gid ]]; then gid=${G_GID[$group]}; fi
+            read -r -a list <<<"${G_MANAGE[$group]}"
+            for item in "${list[@]}"; do
+                if [[ " $manage " != *" $item "* ]]; then manage+=${manage:+ }$item; fi
+            done
+        done
+        if [[ -z ${U_PERMS_SET[$name]} && -n $perms ]]; then
+            PERMS_OUT=""
+            for item in "${PERMS_ALL[@]}"; do
+                if has_perm "$perms" "$item"; then PERMS_OUT+=${PERMS_OUT:++}$item; fi
+            done
+            U_PERMS[$name]=$PERMS_OUT
+        fi
+        if [[ -z ${U_FROM[$name]} ]]; then U_FROM[$name]=$nets; fi
+        if [[ -z ${U_UMASK[$name]} ]]; then U_UMASK[$name]=$umask; fi
+        if [[ -z ${U_EXPIRES[$name]} ]]; then U_EXPIRES[$name]=$expires; fi
+        if [[ -z ${U_GID[$name]} ]]; then U_GID[$name]=$gid; fi
+        if [[ -n ${U_RSYNC[$name]} ]] && ! rsync_compatible "$name"; then
+            die "user \"$name\": rsync works only with full or read-only permissions, and its groups give ${U_PERMS[$name]}"
+        fi
+        resolve_manage "$name" "$manage"
+    done
+}
+
+# Adds the accounts SFTP_RSYNC_USERS names (* for every account whose
+# permissions allow it) to those whose line names rsync.
 resolve_rsync_users() {
     local -a names=()
     local name account
     read -r -a names <<<"$SFTP_RSYNC_USERS"
     for name in "${names[@]}"; do
         if [[ $name == "*" ]]; then
-            for account in "${USERS[@]}"; do U_RSYNC[$account]=rsync; done
+            for account in "${USERS[@]}"; do
+                if rsync_compatible "$account"; then
+                    if [[ -z ${U_RSYNC[$account]} ]]; then U_RSYNC_ENV[$account]=1; fi
+                    U_RSYNC[$account]=rsync
+                else
+                    warn "user $account: SFTP_RSYNC_USERS=* skips this account; rsync needs full or read-only permissions"
+                fi
+            done
             return 0
         fi
         [[ -n ${U_PASS[$name]+set} ]] || die "SFTP_RSYNC_USERS names \"$name\", which is not a configured account"
+        rsync_compatible "$name" ||
+            die "SFTP_RSYNC_USERS names \"$name\", whose permissions are neither full nor read-only, which rsync needs"
+        if [[ -z ${U_RSYNC[$name]} ]]; then U_RSYNC_ENV[$name]=1; fi
         U_RSYNC[$name]=rsync
     done
 }
@@ -224,13 +702,65 @@ ensure_group() {
     getent group "$gid" >/dev/null || groupadd --gid "$gid" "group_$gid"
 }
 
+# The shadow expiry date an account gets: the day after the epoch when
+# disabled, its expires= date, or empty for none.
+expiry_date() {
+    if [[ -n ${U_DISABLED[$1]} ]]; then
+        printf '1970-01-02'
+    else
+        printf '%s' "${U_EXPIRES[$1]}"
+    fi
+}
+
+# The same, as the day count /etc/shadow stores.
+expiry_days() {
+    if [[ -n $1 ]]; then printf '%s' $(($(date -u -d "$1" +%s) / 86400)); fi
+}
+
+# True when the account cannot log in today.
+account_locked() {
+    local days
+    days=$(expiry_days "$(expiry_date "$1")")
+    [[ -n $days ]] && ((days <= $(date -u +%s) / 86400))
+}
+
+# Ends every open session of an account: stops its sshd-session processes,
+# and kills those still running two seconds later.
+end_sessions() {
+    local name=$1 dir title pid tries
+    local -a pids=() alive=()
+    for dir in /proc/[0-9]*; do
+        title=$(tr '\0' ' ' 2>/dev/null <"$dir/cmdline") || continue
+        case $title in
+            "sshd-session: $name [priv]"* | "sshd-session: $name@"*) pids+=("${dir#/proc/}") ;;
+        esac
+    done
+    ((${#pids[@]})) || return 0
+    kill -TERM "${pids[@]}" 2>/dev/null || :
+    for ((tries = 0; tries < 20; tries++)); do
+        alive=()
+        for pid in "${pids[@]}"; do
+            if [[ -e /proc/$pid ]]; then alive+=("$pid"); fi
+        done
+        ((${#alive[@]})) || break
+        sleep 0.1
+    done
+    if ((${#alive[@]})); then
+        kill -KILL "${alive[@]}" 2>/dev/null || :
+    fi
+    info "user $name: open sessions ended"
+}
+
 apply_account() {
-    local name=$1 uid=${U_UID[$1]} gid=${U_GID[$1]:-$DEFAULT_GID} shell=/usr/sbin/nologin
-    [[ -n ${U_RSYNC[$name]} ]] && shell=$RSYNC_GATE
+    local name=$1 uid=${U_UID[$1]} gid=${U_GID[$1]:-$DEFAULT_GID} shell=/usr/sbin/nologin expiry
+    if [[ -n ${U_RSYNC[$name]} ]]; then shell=$RSYNC_GATE; fi
+    expiry=$(expiry_date "$name")
     ensure_group "$gid"
     if getent passwd "$name" >/dev/null; then
         [[ $(getent passwd "$name" | cut -d: -f7) == "$shell" ]] || usermod --shell "$shell" "$name"
         if [[ -n $uid && $(id -u "$name") != "$uid" ]]; then
+            # usermod refuses to change the uid of an account that runs processes.
+            end_sessions "$name"
             usermod --non-unique --uid "$uid" "$name"
             info "user $name: uid changed to $uid"
         fi
@@ -239,13 +769,23 @@ apply_account() {
             info "user $name: primary group changed to $gid"
         fi
         usermod --append --groups "$SFTP_GROUP" "$name"
+        if [[ $(getent shadow "$name" | cut -d: -f8) != "$(expiry_days "$expiry")" ]]; then
+            usermod --expiredate "$expiry" "$name"
+        fi
     else
         local -a args=(--no-create-home --home-dir "/home/$name" --shell "$shell"
             --comment "$MANAGED_COMMENT" --no-user-group --gid "$gid" --groups "$SFTP_GROUP")
         [[ -n $uid ]] && args+=(--non-unique --uid "$uid")
+        [[ -n $expiry ]] && args+=(--expiredate "$expiry")
         useradd "${args[@]}" "$name"
         info "user $name: created (uid $(id -u "$name"), gid $gid)"
     fi
+    if [[ -n ${U_DISABLED[$name]} ]]; then
+        info "user $name: disabled"
+    elif [[ -n ${U_EXPIRES[$name]} ]]; then
+        info "user $name: logins refused from ${U_EXPIRES[$name]} (UTC)"
+    fi
+    if account_locked "$name"; then end_sessions "$name"; fi
 
     local pass=${U_PASS[$name]}
     if [[ -z $pass ]]; then
@@ -305,13 +845,15 @@ apply_dirs() {
 }
 
 # Keys come from /config/userkeys/<name>.pub and /config/userkeys/<name>/*.pub
-# and are installed root-owned outside the chroot.
+# and are installed root-owned outside the chroot. The file is replaced in
+# one rename, so a login never reads a half-written list.
 apply_keys() {
     local name=$1 dest=$AUTH_KEYS_DIR/$1 tmp src fp
     local -a sources=()
     [[ -f $USER_KEY_DIR/$name.pub ]] && sources+=("$USER_KEY_DIR/$name.pub")
     sources+=("$USER_KEY_DIR/$name"/*.pub)
     if ((${#sources[@]} == 0)); then
+        rm -f -- "$dest"
         [[ -n ${U_PASS[$name]} ]] ||
             warn "user $name has no password and no key in $USER_KEY_DIR, so cannot log in"
         return 0
@@ -337,13 +879,24 @@ apply_keys() {
     fi
 }
 
+# Removes the authorized keys of names that are no longer accounts.
+prune_authorized_keys() {
+    local file name
+    local -A wanted=()
+    for name in "${USERS[@]}"; do wanted[$name]=1; done
+    for file in "$AUTH_KEYS_DIR"/* "$AUTH_KEYS_DIR"/.[!.]*; do
+        if [[ -z ${wanted[${file##*/}]:-} ]]; then rm -f -- "$file"; fi
+    done
+}
+
 remove_stale_accounts() {
     local name comment
     local -A wanted=()
     for name in "${USERS[@]}"; do wanted[$name]=1; done
     while IFS=: read -r name _ _ _ comment _; do
         [[ $comment == "$MANAGED_COMMENT" && -z ${wanted[$name]:-} ]] || continue
-        userdel "$name"
+        end_sessions "$name"
+        userdel --force "$name"
         info "user $name: removed (no longer configured); /home/$name is kept"
     done < <(getent passwd)
 }
@@ -351,8 +904,8 @@ remove_stale_accounts() {
 # Every spec is validated before anything is created, so a mistake costs no
 # host key, account or directory.
 parse_specs() {
-    local spec
-    for spec in "${SPECS[@]}"; do parse_spec "$spec"; done
+    local i
+    for i in "${!SPECS[@]}"; do parse_spec "${SPECS[i]}" "${SPEC_SOURCES[i]}"; done
 }
 
 setup_users() {
@@ -364,6 +917,7 @@ setup_users() {
         apply_dirs "$name"
         apply_keys "$name"
     done
+    prune_authorized_keys
     info "accounts configured: ${#USERS[@]}"
 }
 
@@ -402,13 +956,10 @@ empty_rsync_jail() {
     info "user $name: rsync removed from the jail"
 }
 
-# Puts sh, rsync and the gate into the jail of every account allowed rsync,
-# and lets those accounts run commands, which their login shell, the gate,
-# limits to an rsync server.
+# Puts sh, rsync and the gate into the jail of every account allowed rsync.
 setup_rsync() {
     install -d -m 700 "$RSYNC_STATE"
     local name top file manifest
-    local -a allowed=()
     for name in "${USERS[@]}"; do
         if [[ -z ${U_RSYNC[$name]} ]]; then
             empty_rsync_jail "$name"
@@ -423,11 +974,57 @@ setup_rsync() {
         manifest=$RSYNC_STATE/$name
         : >"$manifest"
         for file in "${RSYNC_JAIL_FILES[@]}"; do jail_copy "/home/$name" "$file" "$manifest"; done
-        allowed+=("$name")
+        RSYNC_OK[$name]=1
         info "user $name: rsync allowed"
     done
-    ((${#allowed[@]})) || return 0
-    printf '\nMatch User %s\n    ForceCommand none\n' "$(IFS=,; printf '%s' "${allowed[*]}")" >>/etc/ssh/sshd_config
+}
+
+# Prints the internal-sftp command line of an account's sessions.
+sftp_command() {
+    local name=$1 cmd=internal-sftp umask=${U_UMASK[$1]:-$SFTP_UMASK} perms=${U_PERMS[$1]} p
+    local -a denied=()
+    if is_true "$SFTP_LOG_TRANSFERS"; then cmd+=" -l info"; fi
+    if [[ -n $umask ]]; then cmd+=" -u $umask"; fi
+    if ! has_perm "$perms" upload; then cmd+=" -R"; fi
+    for p in "${PERMS_ALL[@]}"; do
+        [[ $p == upload ]] && continue
+        has_perm "$perms" "$p" && continue
+        # Read-only mode already refuses every change.
+        if has_perm "$perms" upload || [[ $p == list || $p == download ]]; then denied+=("${PERM_REQUESTS[$p]}"); fi
+    done
+    if ((${#denied[@]})); then cmd+=" -P $(IFS=,; printf '%s' "${denied[*]}")"; fi
+    printf '%s\n' "$cmd"
+}
+
+# Appends a Match block for every account whose sessions differ from the
+# global ForceCommand, and one refusing connections from outside the
+# networks an account is limited to. With the file browser on, also writes
+# its sshd's configuration from the same base: every account gets sftp
+# alone there, rsync accounts included, and no refusal by network, which
+# the file browser applies to the web client's address instead.
+write_account_matches() {
+    local name cmd umask mode files=""
+    cp -f -- /etc/ssh/sshd_config "$RUN_DIR/sshd_config.base"
+    for name in "${USERS[@]}"; do
+        cmd=$(sftp_command "$name")
+        if [[ -n ${RSYNC_OK[$name]:-} ]]; then
+            # The gate is the login shell; sftp runs through the Subsystem.
+            mode=full
+            if [[ ${U_PERMS[$name]} == "$PERMS_READONLY" ]]; then mode="readonly"; fi
+            umask=${U_UMASK[$name]:-$SFTP_UMASK}
+            printf '\nMatch User %s\n    ForceCommand none\n    Subsystem sftp %s\n    SetEnv SFTP_RSYNC_MODE=%s%s\n' \
+                "$name" "$cmd" "$mode" "${umask:+ SFTP_UMASK=$umask}"
+        elif [[ $cmd != "$SFTP_COMMAND" ]]; then
+            printf '\nMatch User %s\n    ForceCommand %s\n' "$name" "$cmd"
+        fi
+        if [[ $cmd != "$SFTP_COMMAND" ]]; then
+            files+=$(printf '\nMatch User %s\n    ForceCommand %s' "$name" "$cmd")$'\n'
+        fi
+        if [[ -n ${U_FROM[$name]} ]]; then
+            printf '\nMatch User %s Address *,!%s\n    RefuseConnection yes\n' "$name" "${U_FROM[$name]//,/,!}"
+        fi
+    done >>/etc/ssh/sshd_config
+    write_files_sshd_config "$files"
 }
 
 write_users_template() {
@@ -435,11 +1032,19 @@ write_users_template() {
     cat >"$USERS_CONF" <<'EOF'
 # Accounts, one per line:
 #
-#   name:password[:e][:uid[:gid[:dir1,dir2,...]]]
+#   name:password[:e][:uid[:gid[:dir1,dir2,...[:options]]]]
 #
 # alice:changeme:1001:100:upload       password login, one writable directory
 # bob::1002:100:inbox,outbox            no password: public-key login only
 # carol:$y$j9T$...:e:1003               hashed password (see the README)
+# dave:pw:1004:100:share:readonly       options: rsync, web, full, readonly,
+#                                       uploadonly, perms=, disabled, expires=,
+#                                       from=, umask=, group=, manage=,
+#                                       noshare, sharedays=, sharepassword
+#
+# Groups in /config/sshd/groups.conf, name[:gid[:options]], give their
+# members defaults: grants add up, limits take the strictest, and what an
+# account's own line sets wins, except that every share link limit applies.
 #
 # Public keys go in /config/userkeys/<name>.pub or /config/userkeys/<name>/*.pub
 EOF
@@ -474,7 +1079,7 @@ setup_host_keys() {
 # file, so a bad value stops the container before anything is touched.
 sshd_options_from_env() {
     local var
-    for var in FAIL2BAN_ENABLED SFTP_LOG_TRANSFERS; do
+    for var in FAIL2BAN_ENABLED SFTP_LOG_TRANSFERS WEBUI_ENABLED WEBUI_PLAIN_HTTP WEBUI_FILES_ENABLED; do
         case "${!var,,}" in
             1 | true | yes | on | 0 | false | no | off | "") ;;
             *) die "$var=${!var} must be true or false" ;;
@@ -487,7 +1092,8 @@ sshd_options_from_env() {
         SSHD_OPTS+=(-o "Port=$((10#$SFTP_PORT))")
     fi
     local force=internal-sftp
-    is_true "$SFTP_LOG_TRANSFERS" && force+=" -l info"
+    # The file browser's operations are logged like every other transfer.
+    if is_true "$SFTP_LOG_TRANSFERS" || is_true "$WEBUI_FILES_ENABLED"; then force+=" -l info"; fi
     if [[ -n $SFTP_UMASK ]]; then
         [[ $SFTP_UMASK =~ ^0?[0-7]{3}$ ]] || die "SFTP_UMASK=$SFTP_UMASK is not an octal umask such as 022"
         force+=" -u $SFTP_UMASK"
@@ -536,21 +1142,24 @@ validate_sshd() {
     out=$(/usr/sbin/sshd -t "${SSHD_OPTS[@]}" 2>&1) || die "sshd rejected its configuration: $out"
     [[ -z $out ]] || warn "sshd: $out"
     /usr/sbin/sshd -T "${SSHD_OPTS[@]}" | awk '$1 == "port" { print $2 }' | sort -un >"$RUN_DIR/ports"
+    if is_true "$WEBUI_ENABLED" && grep -qxF -- "$((10#$WEBUI_PORT))" "$RUN_DIR/ports"; then
+        die "sshd would listen on port $WEBUI_PORT, which WEBUI_PORT gives the web UI"
+    fi
     info "sshd will listen on port(s): $(paste -sd, "$RUN_DIR/ports")"
 }
 
 setup_auth_log() {
     [[ $SFTP_AUTH_LOG_MAX_BYTES =~ ^[0-9]{1,15}$ ]] ||
         die "SFTP_AUTH_LOG_MAX_BYTES=$SFTP_AUTH_LOG_MAX_BYTES is not a byte count (0 means no cap)"
-    export SFTP_AUTH_LOG_MAX_BYTES=$((10#$SFTP_AUTH_LOG_MAX_BYTES))
+    SFTP_AUTH_LOG_MAX_BYTES=$((10#$SFTP_AUTH_LOG_MAX_BYTES))
 }
 
 # A chrooted internal-sftp can only reach a syslog socket inside its chroot,
 # so transfer logging needs /home/<name>/dev/log for every user.
 setup_transfer_logging() {
     is_true "$SFTP_LOG_TRANSFERS" || return 0
-    local name dir conf=/etc/rsyslog.d/sftp-chroots.conf
-    : >"$conf"
+    local name dir
+    : >"$CHROOT_LOG_CONF"
     for name in "${USERS[@]}"; do
         dir=/home/$name/dev
         if [[ -L $dir ]] || { [[ -e $dir ]] && [[ $(stat -c %u -- "$dir") != 0 ]]; }; then
@@ -559,9 +1168,11 @@ setup_transfer_logging() {
         fi
         install -d -m 755 -o root -g root -- "$dir"
         # A socket left by the previous start would pass check_log_sockets
-        # whether or not rsyslog can listen on it now.
-        rm -f -- "$dir/log"
-        printf 'input(type="imuxsock" Socket="%s/log" CreatePath="off" RateLimit.Interval="0")\n' "$dir" >>"$conf"
+        # whether or not rsyslog can listen on it now. While the server
+        # runs, rsyslog holds the sockets, and the supervisor recreates
+        # them when it restarts rsyslog.
+        if [[ $MODE == start ]]; then rm -f -- "$dir/log"; fi
+        printf 'input(type="imuxsock" Socket="%s/log" CreatePath="off" RateLimit.Interval="0")\n' "$dir" >>"$CHROOT_LOG_CONF"
         LOG_SOCKETS+=("$dir/log")
     done
     info "transfer logging is on"
@@ -586,6 +1197,207 @@ check_log_sockets() {
         warn "rsyslogd did not create $sock, so transfers in that chroot are not logged." \
             "A host AppArmor or SELinux policy for rsyslogd can cause this; see the README."
     done
+}
+
+# ---------------------------------------------------------------------------
+# Country rules
+# ---------------------------------------------------------------------------
+# Refuses a country rule that cannot be loaded, before anything changes, and
+# writes SFTP_COUNTRIES as capitals separated by spaces.
+check_country_rules() {
+    local -a codes=()
+    local code
+    case $SFTP_COUNTRY_RULE in
+        off | block | allow) ;;
+        *) die "SFTP_COUNTRY_RULE=$SFTP_COUNTRY_RULE is not off, block or allow" ;;
+    esac
+    read -r -a codes <<<"${SFTP_COUNTRIES//,/ }"
+    for code in "${codes[@]}"; do
+        [[ $code =~ ^[A-Za-z]{2}$ ]] || die "SFTP_COUNTRIES: $code is not a two-letter country code"
+    done
+    if [[ $SFTP_COUNTRY_RULE == allow ]] && ((${#codes[@]} == 0)); then
+        die "SFTP_COUNTRY_RULE=allow needs at least one country in SFTP_COUNTRIES"
+    fi
+    SFTP_COUNTRIES=${codes[*]^^}
+}
+
+# Refuses half a MaxMind key, before anything changes.
+check_geoip() {
+    local id=${MAXMIND_ACCOUNT_ID:-} key=${MAXMIND_LICENSE_KEY:-}
+    if [[ -n $id && -z $key ]] || [[ -z $id && -n $key ]]; then
+        die "MAXMIND_ACCOUNT_ID and MAXMIND_LICENSE_KEY go together; set both or neither"
+    fi
+}
+
+# At start, downloads MaxMind GeoLite2 Country when a key is set, from the
+# environment or the web UI, and /config/geoip holds no copy yet; an old
+# copy is refreshed by refresh_geoip, so it never delays the start. Without
+# a copy the country rules read DB-IP Lite.
+setup_geoip() {
+    [[ $MODE == start ]] || return 0
+    local out rc=0
+    out=$(timeout 120 "$HELPER_BIN" geoip-update --if-missing 2>&1) || rc=$?
+    case $rc in
+        0) [[ -z $out ]] || info "$out" ;;
+        3) warn "$out" ;;
+        *) warn "MaxMind GeoLite2 was not downloaded, so the country rules read the previous copy or DB-IP Lite: $out" ;;
+    esac
+}
+
+# Loads the country rules into nftables. The table sftp_countries drops new
+# connections to sshd's ports and the web UI's from the listed countries
+# (block) or from every other country (allow), and is removed when the rule
+# is off. Private ranges, WEBUI_TRUSTED_NETWORKS and the never-ban list on
+# the Bans page always pass. $RUN_DIR/country-rules records, as key=value
+# lines, what was loaded and whether the firewall enforces it, for the
+# helper and the web UI. Runs after validate_sshd, which lists sshd's ports.
+setup_country_rules() {
+    local state=$RUN_DIR/country-rules errors=$RUN_DIR/country-rules.err
+    local ports trusted="" never_ban="" out line rc=0 enforced=yes
+    rm -f "$state"
+    if [[ $SFTP_COUNTRY_RULE == off ]]; then
+        # Removing the table needs NET_ADMIN, without which none was loaded.
+        nft -f - <<<$'table inet sftp_countries\ndelete table inet sftp_countries' 2>/dev/null || :
+        return 0
+    fi
+    ports=$(paste -sd' ' "$RUN_DIR/ports")
+    if is_true "$WEBUI_ENABLED"; then
+        ports+=" $((10#$WEBUI_PORT))"
+        trusted=${WEBUI_TRUSTED_NETWORKS//$'\n'/ }
+    fi
+    if is_true "$WEBUI_FILES_ENABLED"; then ports+=" $WEBUI_FILES_PORT"; fi
+    if [[ -f $F2B_DIR/jail.d/00-webui.local ]]; then
+        never_ban=$(sed -n 's/^ignoreip[[:space:]]*=[[:space:]]*//p' "$F2B_DIR/jail.d/00-webui.local")
+        never_ban=${never_ban//$'\n'/ }
+    fi
+    # The helper loads the rules: 0 when they are enforced, 4 with the
+    # firewall's reason when it refused them, anything else when they or the
+    # country database cannot be read.
+    out=$("$HELPER_BIN" country-rules "$SFTP_COUNTRY_RULE" "$SFTP_COUNTRIES" "$ports" "$trusted" "$never_ban" 2>"$errors") || rc=$?
+    if ((rc != 0 && rc != 4)); then
+        out=$(<"$errors")
+        rm -f "$errors"
+        die "$out"
+    fi
+    while IFS= read -r line; do warn "$line"; done <"$errors"
+    rm -f "$errors"
+    if ((rc == 0)); then
+        info "country rules: $SFTP_COUNTRY_RULE ${SFTP_COUNTRIES:-no countries} on port(s) ${ports// /,}"
+    else
+        out=${out%%$'\n'*}
+        enforced="no: $out"
+        warn "country rules are not enforced: the firewall refused them ($out). Start the container with --cap-add=NET_ADMIN."
+    fi
+    printf '%s\n' "enforced=$enforced" "rule=$SFTP_COUNTRY_RULE" "countries=$SFTP_COUNTRIES" "ports=$ports" \
+        "trusted=$trusted" "never_ban=$never_ban" >"$state"
+}
+
+# ---------------------------------------------------------------------------
+# File browser
+# ---------------------------------------------------------------------------
+# Refuses a file browser that cannot work, before anything changes: it needs
+# the admin web UI, where admins turn on an account's access and send its
+# sign-in link, and a port of its own.
+check_files() {
+    is_true "$WEBUI_FILES_ENABLED" || return 0
+    is_true "$WEBUI_ENABLED" ||
+        die "WEBUI_FILES_ENABLED needs WEBUI_ENABLED=true: admins turn on each account's file browser and send its sign-in link from the admin web UI"
+    local key value
+    for key in FILES_SHARE FILES_SHARE_PASSWORD; do
+        value=${!key:-}
+        [[ -z $value || ${value,,} =~ ^(1|true|yes|on|0|false|no|off)$ ]] || die "$key=$value must be true or false"
+    done
+    # Days as the root helper reads them, a count that fits 32 bits.
+    for key in FILES_SHARE_DAYS FILES_SHARE_MAX_DAYS; do
+        value=${!key:-}
+        [[ -z $value || $value =~ ^[1-9][0-9]{0,8}$ ]] || die "$key=$value is not a number of days from 1"
+    done
+    if [[ ! $WEBUI_FILES_PORT =~ ^[0-9]{1,5}$ ]] || ((10#$WEBUI_FILES_PORT < 1 || 10#$WEBUI_FILES_PORT > 65535)); then
+        die "WEBUI_FILES_PORT=$WEBUI_FILES_PORT is not a port number"
+    fi
+    WEBUI_FILES_PORT=$((10#$WEBUI_FILES_PORT))
+    ((WEBUI_FILES_PORT >= 1024)) ||
+        die "WEBUI_FILES_PORT=$WEBUI_FILES_PORT must be from 1024 to 65535, since the file browser runs without root"
+    ((WEBUI_FILES_PORT != 10#$WEBUI_PORT)) ||
+        die "WEBUI_FILES_PORT and WEBUI_PORT are both $WEBUI_FILES_PORT; the file browser needs a port of its own"
+    ((WEBUI_FILES_PORT != FILES_SSHD_PORT)) ||
+        die "WEBUI_FILES_PORT=$WEBUI_FILES_PORT is the port the file browser's own sshd uses on loopback"
+}
+
+# The certificate authority of the file browser's sftp sessions: made once
+# and kept with the host keys. Only the root helper signs with it, and only
+# the file browser's sshd trusts it.
+setup_files_ca() {
+    is_true "$WEBUI_FILES_ENABLED" || return 0
+    if [[ ! -s $FILES_CA ]]; then
+        info "generating the file browser's certificate authority in $HOST_KEY_DIR"
+        rm -f -- "$FILES_CA" "$FILES_CA.pub"
+        ssh-keygen -q -t ed25519 -N '' -C sftp-files-ca -f "$FILES_CA"
+    fi
+    [[ -s $FILES_CA.pub ]] || ssh-keygen -y -f "$FILES_CA" >"$FILES_CA.pub"
+    chmod 600 -- "$FILES_CA"
+    install -m 644 -- "$FILES_CA.pub" /etc/ssh/files_ca.pub
+}
+
+# The file browser's sshd: loopback only, logins by its authority's
+# certificates alone, and only for accounts with web access and the
+# accounts they manage, an @group's members among them. Its own lines come
+# first, since sshd keeps the first value it reads for a keyword; the rest
+# is the main configuration's base, user drop-ins included, and the
+# per-account blocks write_account_matches hands it.
+write_files_sshd_config() {
+    local blocks=$1 name item member
+    local -a web=() targets=()
+    local -A allow=()
+    rm -f -- "$FILES_SSHD_CONF"
+    is_true "$WEBUI_FILES_ENABLED" || return 0
+    for name in "${USERS[@]}"; do
+        [[ -n ${U_WEB[$name]} ]] || continue
+        allow[$name]=1
+        read -r -a targets <<<"${U_MANAGE[$name]}"
+        for item in "${targets[@]}"; do
+            if [[ $item != @* ]]; then
+                allow[$item]=1
+                continue
+            fi
+            for member in "${USERS[@]}"; do
+                if [[ " ${U_GROUPS[$member]} " == *" ${item#@} "* ]]; then allow[$member]=1; fi
+            done
+        done
+    done
+    for name in "${USERS[@]}"; do
+        if [[ -n ${allow[$name]:-} ]]; then web+=("$name"); fi
+    done
+    {
+        printf '%s\n' "# Written by the entrypoint on every start and apply, for the file browser."
+        printf 'ListenAddress 127.0.0.1:%s\n' "$FILES_SSHD_PORT"
+        printf '%s\n' "TrustedUserCAKeys /etc/ssh/files_ca.pub" "AuthorizedKeysFile none" "AuthorizedPrincipalsFile none" \
+            "PasswordAuthentication no" "KbdInteractiveAuthentication no" "PerSourcePenalties no" \
+            "MaxStartups 100:30:200" "PidFile /run/sshd-files.pid"
+        if ((${#web[@]})); then printf 'AllowUsers %s\n' "${web[*]}"; else printf '%s\n' 'DenyUsers *'; fi
+        cat -- "$RUN_DIR/sshd_config.base"
+        printf '%s' "$blocks"
+    } >"$FILES_SSHD_CONF"
+}
+
+# Checks the file browser's sshd: sshd accepts its configuration, it listens
+# on loopback alone, and no other door shares its ports.
+validate_files_sshd() {
+    [[ -e $FILES_SSHD_CONF ]] || return 0
+    local out listen
+    out=$(/usr/sbin/sshd -t -f "$FILES_SSHD_CONF" "${SSHD_OPTS[@]}" 2>&1) ||
+        die "the file browser's sshd rejected its configuration: $out"
+    listen=$(/usr/sbin/sshd -T -f "$FILES_SSHD_CONF" "${SSHD_OPTS[@]}" | awk '$1 == "listenaddress" { print $2 }' | sort -u)
+    [[ $listen == "127.0.0.1:$FILES_SSHD_PORT" ]] ||
+        die "the file browser's sshd would listen on ${listen//$'\n'/, } as well as loopback; remove the ListenAddress lines from /config/sshd/sshd_config.d"
+    if grep -qxF -- "$FILES_SSHD_PORT" "$RUN_DIR/ports"; then
+        die "sshd listens on port $FILES_SSHD_PORT, which the file browser's own sshd uses on loopback"
+    fi
+    if grep -qxF -- "$WEBUI_FILES_PORT" "$RUN_DIR/ports"; then
+        die "sshd would listen on port $WEBUI_FILES_PORT, which WEBUI_FILES_PORT gives the file browser"
+    fi
+    out=$(awk '$1 == "AllowUsers" { $1 = ""; print substr($0, 2); exit }' "$FILES_SSHD_CONF")
+    info "file browser sshd: loopback port $FILES_SSHD_PORT, for ${out:-no account yet}"
 }
 
 # ---------------------------------------------------------------------------
@@ -620,6 +1432,9 @@ setup_fail2ban() {
     fi
     mkdir -p "$F2B_DIR/jail.d" "$F2B_DIR/filter.d" "$F2B_DIR/action.d"
     install -d -m 755 /run/fail2ban
+    if is_true "$WEBUI_ENABLED"; then
+        printf '[sftp-webui]\nenabled = true\n' >/etc/fail2ban/jail.d/10-webui.conf
+    fi
 
     if [[ -f $F2B_DIR/fail2ban.conf ]]; then
         warn "$F2B_DIR/fail2ban.conf was written by a 1.x image and is no longer read; put settings in $F2B_DIR/fail2ban.local"
@@ -650,12 +1465,15 @@ setup_fail2ban() {
 
     local out
     out=$(fail2ban-client --test 2>&1) || die "fail2ban rejected its configuration: $out"
-    select_firewall
-    touch "$RUN_DIR/fail2ban-enabled"
+    if [[ $MODE == start ]]; then
+        select_firewall
+        touch "$RUN_DIR/fail2ban-enabled"
+    fi
 }
 
 # ---------------------------------------------------------------------------
-# Custom scripts, run as root after the accounts exist
+# Custom scripts, run as root after the accounts exist, on every start and
+# every apply
 # ---------------------------------------------------------------------------
 run_custom_scripts() {
     local f status
@@ -671,6 +1489,140 @@ run_custom_scripts() {
             warn "skipping $f: not executable and not a .sh file"
         fi
     done
+}
+
+# ---------------------------------------------------------------------------
+# Web UI
+# ---------------------------------------------------------------------------
+# Fills the array named by $1 with the web server's environment; $2 is the
+# admin file it reads.
+webui_environment() {
+    local -n env_out=$1
+    env_out=(PATH=/usr/bin:/bin "WEBUI_PORT=$WEBUI_PORT" "WEBUI_PLAIN_HTTP=$WEBUI_PLAIN_HTTP"
+        "WEBUI_TRUSTED_PROXIES=$WEBUI_TRUSTED_PROXIES" "WEBUI_TRUSTED_NETWORKS=$WEBUI_TRUSTED_NETWORKS")
+    if [[ -v TZ ]]; then env_out+=("TZ=$TZ"); fi
+    if [[ -n $WEBUI_ADMIN_FILE ]]; then env_out+=("WEBUI_ADMIN_FILE=$2"); fi
+    if is_true "$WEBUI_FILES_ENABLED"; then env_out+=("WEBUI_FILES_PORT=$WEBUI_FILES_PORT"); fi
+}
+
+# The web server checks its own settings, so a bad one stops the container
+# before anything is created.
+validate_webui() {
+    is_true "$WEBUI_ENABLED" || return 0
+    local out
+    local -a webenv=()
+    webui_environment webenv "$WEBUI_ADMIN_FILE"
+    out=$(env -i "${webenv[@]}" "$WEBUI_BIN" check 2>&1) || die "web UI: $out"
+}
+
+# The web server owns /config/webui; the audit log lives outside it, where
+# only the root helper can write.
+setup_webui() {
+    rm -f "$RUN_DIR/webui-port"
+    is_true "$WEBUI_ENABLED" || return 0
+    install -d -m 750 -o root -g "$WEBUI_USER" "$WEBUI_RUN"
+    install -d -m 700 -o "$WEBUI_USER" -g "$WEBUI_USER" "$WEBUI_DIR"
+    chown -R "$WEBUI_USER:$WEBUI_USER" "$WEBUI_DIR"
+    install -d -m 700 -o root -g root "$AUDIT_DIR"
+    if [[ -n $WEBUI_ADMIN_FILE ]]; then
+        install -m 400 -o "$WEBUI_USER" -g "$WEBUI_USER" -- "$WEBUI_ADMIN_FILE" "$WEBUI_RUN/admins"
+    fi
+    printf '%s\n' "$((10#$WEBUI_PORT))" >"$RUN_DIR/webui-port"
+    if is_true "$WEBUI_FILES_ENABLED"; then
+        install -d -m 750 -o root -g "$FILES_USER" "$FILES_RUN"
+        # The file browser's ssh client checks its loopback sshd against these.
+        local key
+        for key in "$HOST_KEY_DIR"/ssh_host_*_key.pub; do
+            printf '[127.0.0.1]:%s %s\n' "$FILES_SSHD_PORT" "$(cut -d' ' -f1,2 -- "$key")"
+        done >"$FILES_RUN/known_hosts"
+        chown "root:$FILES_USER" "$FILES_RUN/known_hosts"
+        chmod 640 "$FILES_RUN/known_hosts"
+        # The file browser keeps its TLS certificate here.
+        install -d -m 700 -o "$FILES_USER" -g "$FILES_USER" "$CONFIG/browser"
+        chown -R "$FILES_USER:$FILES_USER" "$CONFIG/browser"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# State for the helper and the supervisor
+# ---------------------------------------------------------------------------
+# The account's options in canonical form, as users.conf would write them.
+options_of() {
+    local name=$1 perms=${U_PERMS[$1]} net
+    local -a out=() nets=()
+    if [[ -n ${U_RSYNC[$name]} && -z ${U_RSYNC_ENV[$name]} ]]; then out+=(rsync); fi
+    if [[ -n ${U_WEB[$name]} ]]; then out+=(web); fi
+    case $perms in
+        "$PERMS_FULL") ;;
+        "$PERMS_READONLY") out+=(readonly) ;;
+        "$PERMS_UPLOADONLY") out+=(uploadonly) ;;
+        *) out+=("perms=$perms") ;;
+    esac
+    if [[ -n ${U_DISABLED[$name]} ]]; then out+=(disabled); fi
+    if [[ -n ${U_EXPIRES[$name]} ]]; then out+=("expires=${U_EXPIRES[$name]}"); fi
+    IFS=, read -r -a nets <<<"${U_FROM[$name]}"
+    for net in "${nets[@]}"; do out+=("from=$net"); done
+    if [[ -n ${U_UMASK[$name]} ]]; then out+=("umask=${U_UMASK[$name]}"); fi
+    if [[ -n ${U_NOSHARE[$name]} ]]; then out+=(noshare); fi
+    if [[ -n ${U_SHAREDAYS[$name]} ]]; then out+=("sharedays=${U_SHAREDAYS[$name]}"); fi
+    if [[ -n ${U_SHAREPASSWORD[$name]} ]]; then out+=(sharepassword); fi
+    local item
+    local -a items=()
+    read -r -a items <<<"${U_GROUPS[$name]}"
+    for item in "${items[@]}"; do out+=("group=$item"); done
+    read -r -a items <<<"${U_MANAGE[$name]}"
+    for item in "${items[@]}"; do out+=("manage=$item"); done
+    (
+        IFS=,
+        printf '%s' "${out[*]}"
+    )
+}
+
+# accounts: one tab-separated line per account, without passwords: name,
+# source, uid, gid, directories, options, password (set or none), rsync
+# granted by SFTP_RSYNC_USERS (yes or no), rsync in the jail (yes or no).
+write_state() {
+    local name pass env jail
+    for name in "${USERS[@]}"; do
+        pass=none env=no jail=no
+        if [[ -n ${U_PASS[$name]} ]]; then pass="set"; fi
+        if [[ -n ${U_RSYNC_ENV[$name]} ]]; then env=yes; fi
+        if [[ -n ${RSYNC_OK[$name]:-} ]]; then jail=yes; fi
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "${U_SOURCE[$name]}" "$(id -u "$name")" \
+            "$(id -g "$name")" "${U_DIRS[$name]}" "$(options_of "$name")" "$pass" "$env" "$jail"
+    done >"$RUN_DIR/accounts.new"
+    mv -f -- "$RUN_DIR/accounts.new" "$RUN_DIR/accounts"
+    : >"$RUN_DIR/sshd-options"
+    if ((${#SSHD_OPTS[@]})); then printf '%s\0' "${SSHD_OPTS[@]}" >"$RUN_DIR/sshd-options"; fi
+    : >"$RUN_DIR/log-sockets"
+    if ((${#LOG_SOCKETS[@]})); then printf '%s\n' "${LOG_SOCKETS[@]}" >"$RUN_DIR/log-sockets"; fi
+    printf '%s\n' "$SFTP_AUTH_LOG_MAX_BYTES" >"$RUN_DIR/auth-log-max"
+}
+
+configure() {
+    load_groups
+    parse_specs
+    resolve_groups
+    resolve_rsync_users
+    setup_auth_log
+    sshd_options_from_env
+    validate_webui
+    check_country_rules
+    check_geoip
+    check_files
+    setup_sshd
+    setup_host_keys
+    setup_files_ca
+    setup_users
+    setup_rsync
+    write_account_matches
+    run_custom_scripts
+    validate_sshd
+    validate_files_sshd
+    setup_geoip
+    setup_country_rules
+    setup_transfer_logging
+    setup_fail2ban
 }
 
 # ---------------------------------------------------------------------------
@@ -693,6 +1645,21 @@ stop_proc() {
     wait "$pid" || return 0
 }
 
+# Stops the supervised process of that name and forgets it.
+drop_proc() {
+    local name=$1 pid
+    local -a keep=()
+    for pid in "${PIDS[@]}"; do
+        if [[ ${PROC_NAME[$pid]} == "$name" ]]; then
+            stop_proc "$pid"
+            REAPED[$pid]=1
+        else
+            keep+=("$pid")
+        fi
+    done
+    PIDS=("${keep[@]}")
+}
+
 # sshd and fail2ban stop first, so rsyslog still records their shutdown.
 stop_all() {
     local pid
@@ -712,20 +1679,50 @@ on_signal() {
     info "received SIG$1; stopping"
 }
 
-# Copies auth.log to auth.log.1 and truncates it in place once it reaches
-# SFTP_AUTH_LOG_MAX_BYTES. rsyslog appends (O_APPEND), so it carries on at
-# the new end without being signaled, which a host AppArmor profile for
-# rsyslogd can forbid. The size is read every five seconds, so the file can
-# pass the cap by what is logged in that time.
+# Copies auth.log and sftp-events.log to <name>.1 and truncates each in
+# place once it reaches the cap in $RUN_DIR/auth-log-max, which apply
+# rewrites. rsyslog appends (O_APPEND), so it carries on at the new end
+# without being signaled, which a host AppArmor profile for rsyslogd can
+# forbid. A line written between the copy and the truncation is in neither
+# file. The size is read every five seconds, so a file can pass the cap by
+# what is logged in that time.
 # shellcheck disable=SC2317,SC2329 # started through start_proc in supervise
 rotate_auth_log() {
-    local size
+    local size cap log
     while sleep 5; do
-        [[ -e $AUTH_LOG ]] || continue
-        size=$(stat -c %s -- "$AUTH_LOG") || continue
-        ((size >= SFTP_AUTH_LOG_MAX_BYTES)) || continue
-        cp -f -- "$AUTH_LOG" "$AUTH_LOG.1" || continue
-        : >"$AUTH_LOG" || continue
+        cap=0
+        if [[ -r $RUN_DIR/auth-log-max ]]; then read -r cap <"$RUN_DIR/auth-log-max" || cap=0; fi
+        [[ $cap =~ ^[0-9]+$ ]] || continue
+        ((cap > 0)) || continue
+        for log in "$AUTH_LOG" "$EVENTS_LOG"; do
+            [[ -e $log ]] || continue
+            size=$(stat -c %s -- "$log") || continue
+            ((size >= cap)) || continue
+            cp -f -- "$log" "$log.1" || continue
+            : >"$log" || continue
+        done
+    done
+}
+
+# Five minutes after start and every six hours after that, downloads
+# GeoLite2 again once the copy is three days old, then applies the
+# configuration so the country rules read the new copy.
+# shellcheck disable=SC2317,SC2329 # started through start_proc in supervise
+refresh_geoip() {
+    local out rc wait=300
+    while sleep "$wait"; do
+        wait=21600
+        rc=0
+        out=$(timeout 120 "$HELPER_BIN" geoip-update 2>&1) || rc=$?
+        case $rc in
+            0) [[ -n $out ]] || continue ;;
+            3) warn "$out"; continue ;;
+            *) warn "MaxMind GeoLite2 was not downloaded: $out"; continue ;;
+        esac
+        info "$out"
+        if [[ -e $RUN_DIR/country-rules ]] && ! out=$("$0" apply 2>&1); then
+            warn "the country rules did not reload the new GeoLite2: $out"
+        fi
     done
 }
 
@@ -738,66 +1735,231 @@ wait_for_socket() {
     done
 }
 
+# True when both files hold the same bytes, or neither exists.
+same_content() {
+    if [[ -e $1 && -e $2 ]]; then
+        cmp -s -- "$1" "$2"
+        return
+    fi
+    [[ ! -e $1 && ! -e $2 ]]
+}
+
+# Starts rsyslogd and remembers which chroot sockets it was started with.
+start_rsyslog() {
+    rm -f /dev/log
+    if [[ -e $CHROOT_LOG_CONF ]]; then
+        cp -f -- "$CHROOT_LOG_CONF" "$RUN_DIR/rsyslog-chroots.conf"
+    else
+        rm -f -- "$RUN_DIR/rsyslog-chroots.conf"
+    fi
+    start_proc rsyslog rsyslogd -n -iNONE -f /etc/rsyslog.conf
+    wait_for_socket /dev/log || return 1
+    check_log_sockets
+}
+
+start_webui() {
+    local -a webenv=()
+    rm -f "$WEBUI_RUN/helper.sock"
+    start_proc webui-helper env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin "$HELPER_BIN"
+    wait_for_socket "$WEBUI_RUN/helper.sock" || die "the web UI helper did not create $WEBUI_RUN/helper.sock"
+    webui_environment webenv "$WEBUI_RUN/admins"
+    start_proc webui env -i "${webenv[@]}" setpriv --reuid="$WEBUI_USER" --regid="$WEBUI_USER" \
+        --clear-groups --no-new-privs -- "$WEBUI_BIN" serve
+    if [[ -d $FILES_RUN ]]; then
+        local -a filesenv=(PATH=/usr/bin:/bin "WEBUI_PORT=$WEBUI_FILES_PORT" "WEBUI_PLAIN_HTTP=$WEBUI_PLAIN_HTTP"
+            "WEBUI_TRUSTED_PROXIES=$WEBUI_TRUSTED_PROXIES" "WEBUI_TRUSTED_NETWORKS=$WEBUI_TRUSTED_NETWORKS")
+        if [[ -v TZ ]]; then filesenv+=("TZ=$TZ"); fi
+        start_proc files env -i "${filesenv[@]}" setpriv --reuid="$FILES_USER" --regid="$FILES_USER" \
+            --clear-groups --no-new-privs -- "$WEBUI_BIN" files
+        info "file browser started on port $WEBUI_FILES_PORT"
+    fi
+}
+
+# Restarts sshd's listener with the options apply wrote, restarts rsyslogd
+# when the chroot sockets changed, reloads fail2ban, and writes the outcome
+# for the apply that asked. Open sessions belong to their own sshd-session
+# processes and are kept.
+reload_services() {
+    local token="" status=ok out line
+    local -a notes=() opts=()
+    if [[ -r $RUN_DIR/reload-request ]]; then read -r token <"$RUN_DIR/reload-request" || token=""; fi
+    if [[ -r $APPLY_LOG ]]; then
+        while IFS= read -r line; do printf '%s\n' "$line"; done <"$APPLY_LOG"
+    fi
+    if [[ -r $RUN_DIR/sshd-options ]]; then mapfile -d '' -t opts <"$RUN_DIR/sshd-options"; fi
+    SSHD_OPTS=("${opts[@]}")
+    drop_proc sshd
+    rm -f /run/sshd.pid
+    start_proc sshd /usr/sbin/sshd -D "${SSHD_OPTS[@]}"
+    drop_proc sshd-files
+    if [[ -e $FILES_SSHD_CONF ]]; then
+        rm -f /run/sshd-files.pid
+        start_proc sshd-files /usr/sbin/sshd -D -f "$FILES_SSHD_CONF" "${SSHD_OPTS[@]}"
+    fi
+
+    if ! same_content "$CHROOT_LOG_CONF" "$RUN_DIR/rsyslog-chroots.conf"; then
+        drop_proc rsyslog
+        # rsyslogd binds each socket afresh, so none may be left behind.
+        for line in "${LOG_SOCKETS[@]}"; do rm -f -- "$line"; done
+        LOG_SOCKETS=()
+        if [[ -r $RUN_DIR/log-sockets ]]; then mapfile -t LOG_SOCKETS <"$RUN_DIR/log-sockets"; fi
+        for line in "${LOG_SOCKETS[@]}"; do rm -f -- "$line"; done
+        if ! start_rsyslog; then
+            status=failed
+            notes+=("rsyslogd did not restart")
+        fi
+    fi
+    if [[ -e $RUN_DIR/fail2ban-enabled ]] && ! out=$(fail2ban-client reload 2>&1); then
+        status=failed
+        notes+=("fail2ban did not reload: $out")
+    fi
+    {
+        printf '%s %s\n' "$token" "$status"
+        if ((${#notes[@]})); then printf '%s\n' "${notes[@]}"; fi
+    } >"$RUN_DIR/reload-done.new"
+    mv -f -- "$RUN_DIR/reload-done.new" "$RUN_DIR/reload-done"
+    if [[ $status == ok ]]; then
+        info "configuration applied"
+    else
+        warn "configuration applied, but: ${notes[*]}"
+    fi
+}
+
 supervise() {
     trap 'on_signal TERM' TERM
     trap 'on_signal INT' INT
+    trap 'RELOAD_PENDING=true' USR1
     trap - ERR
+    # From here on the supervisor itself decides when to stop.
+    set +e
 
-    rm -f /dev/log /run/sshd.pid
-    start_proc rsyslog rsyslogd -n -iNONE -f /etc/rsyslog.conf
-    wait_for_socket /dev/log || die "rsyslogd did not create /dev/log"
-    check_log_sockets
-    if ((SFTP_AUTH_LOG_MAX_BYTES > 0)); then
-        start_proc auth-log-rotation rotate_auth_log
-    fi
+    rm -f /run/sshd.pid
+    start_rsyslog || die "rsyslogd did not create /dev/log"
+    start_proc auth-log-rotation rotate_auth_log
+    start_proc geoip-refresh refresh_geoip
 
     if [[ -e $RUN_DIR/fail2ban-enabled ]]; then
         rm -f /run/fail2ban/fail2ban.sock /run/fail2ban/fail2ban.pid
         start_proc fail2ban fail2ban-server -f -x start
     fi
     start_proc sshd /usr/sbin/sshd -D "${SSHD_OPTS[@]}"
+    if [[ -e $FILES_SSHD_CONF ]]; then
+        rm -f /run/sshd-files.pid
+        start_proc sshd-files /usr/sbin/sshd -D -f "$FILES_SSHD_CONF" "${SSHD_OPTS[@]}"
+    fi
+    if [[ -s $RUN_DIR/webui-port ]]; then
+        start_webui
+        info "web UI started on port $(<"$RUN_DIR/webui-port")"
+    fi
+    printf '%s\n' "$$" >"$RUN_DIR/supervisor.pid"
     info "server started"
 
     local exited status
     while ! $STOPPING; do
-        exited=""
+        # wait leaves exited unset when a trapped signal, such as USR1 from
+        # apply, ends the wait before any process exits.
         if wait -n -p exited "${PIDS[@]}"; then status=0; else status=$?; fi
         $STOPPING && break
-        [[ -n $exited ]] || continue
-        REAPED[$exited]=1
-        warn "${PROC_NAME[$exited]} exited with status $status; stopping the container"
-        stop_all
-        exit $((status == 0 ? 1 : status))
+        if [[ -n ${exited-} ]]; then
+            REAPED[$exited]=1
+            warn "${PROC_NAME[$exited]} exited with status $status; stopping the container"
+            stop_all
+            exit $((status == 0 ? 1 : status))
+        fi
+        if $RELOAD_PENDING; then
+            RELOAD_PENDING=false
+            reload_services
+        fi
     done
     stop_all
     info "stopped"
     exit 0
 }
 
+# ---------------------------------------------------------------------------
+# Apply
+# ---------------------------------------------------------------------------
+# Prints the supervisor's pid, or fails when no server runs.
+supervisor_pid() {
+    local pid
+    [[ -s $RUN_DIR/supervisor.pid ]] || return 1
+    read -r pid <"$RUN_DIR/supervisor.pid" || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    printf '%s\n' "$pid"
+}
+
+# Asks the supervisor to load what apply wrote and waits for its answer for
+# as long as the supervisor runs.
+request_reload() {
+    local pid=$1 token done_token="" status="" line
+    local -a notes=()
+    token=$$-$EPOCHREALTIME
+    printf '%s\n' "$token" >"$RUN_DIR/reload-request"
+    # The supervisor copies this run's messages into the container log.
+    LOG_COPY=""
+    kill -USR1 "$pid" || die "the supervisor (pid $pid) is gone"
+    while :; do
+        if [[ -s $RUN_DIR/reload-done ]]; then
+            {
+                read -r done_token status
+                mapfile -t notes
+            } <"$RUN_DIR/reload-done"
+            if [[ $done_token == "$token" ]]; then break; fi
+        fi
+        kill -0 "$pid" 2>/dev/null || die "the server stopped before it applied the configuration"
+        sleep 0.1
+    done
+    for line in "${notes[@]}"; do warn "$line"; done
+    [[ $status == ok ]] || die "the server did not load every change; see the messages above"
+    info "applied; sshd's listener restarted and open sessions kept"
+}
+
+apply_main() {
+    [[ -d $RUN_DIR ]] || die "the server is not running"
+    exec 9>>"$RUN_DIR/apply.lock"
+    flock 9
+    local pid
+    pid=$(supervisor_pid) || die "the server is not running yet"
+    : >"$APPLY_LOG"
+    LOG_COPY=$APPLY_LOG
+    capture_environment
+    load_settings_file
+    apply_defaults
+    local -a args=()
+    if [[ -s $SAVED_ARGS ]]; then mapfile -d '' -t args <"$SAVED_ARGS"; fi
+    restore_image_configs
+    collect_specs "${args[@]}"
+    ((${#SPECS[@]})) || die "no users configured; with no account the container would not start again"
+    configure
+    write_state
+    request_reload "$pid"
+}
+
 main() {
+    if (($#)) && [[ $1 == apply ]]; then
+        (($# == 1)) || die "apply takes no arguments"
+        MODE=apply
+        apply_main
+        exit 0
+    fi
     if (($#)) && [[ ! $1 =~ $RE_SPEC_HINT ]]; then
         exec "$@"
     fi
 
+    capture_environment
+    load_settings_file
+    apply_defaults
     restore_image_configs
+    save_environment "$@"
     collect_specs "$@"
     if ((${#SPECS[@]} == 0)); then
         write_users_template
         log "fatal: no users configured. Add them to $USERS_CONF, SFTP_USERS or the command line." >&2
         exit 3
     fi
-    parse_specs
-    resolve_rsync_users
-    setup_auth_log
-    sshd_options_from_env
-    setup_sshd
-    setup_host_keys
-    setup_users
-    setup_rsync
-    run_custom_scripts
-    validate_sshd
-    setup_transfer_logging
-    setup_fail2ban
+    configure
+    setup_webui
+    write_state
     supervise
 }
 

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true,"historyCacheSize":0,"refreshOnHistoryMiss":true,"responseHandling":[{"code":"204","swap":false},{"code":"...","swap":true}]}'>
+<title>{{ l.title }} - sftp admin</title>
+<link rel="icon" type="image/svg+xml" href="{{ l.favicon }}">
+<link rel="stylesheet" href="{{ l.css }}">
+<script src="{{ l.htmx }}" defer></script>
+<script src="{{ l.js }}" defer></script>
+</head>
+{% if l.admin.is_empty() %}
+<body>
+<main class="auth">{% block bare %}{% endblock %}</main>
+</body>
+{% else %}
+<body hx-boost="true" hx-headers='{"X-CSRF-Token": "{{ l.csrf }}"}'>
+<div class="app">
+<div class="shell">
+  <aside class="sidebar" aria-label="Main">
+    <a class="brand" href="/">{{ crate::assets::BRAND|safe }}<span class="brand-name">sftp</span><span class="brand-tag">Admin</span></a>
+    <nav class="nav">
+      <div class="nav-label">Server</div>
+      <a class="nav-item" href="/" data-tip="Status" data-tip-side="right" {% if l.nav == "status" %}aria-current="page"{% endif %}>{{ crate::assets::icon("gauge")|safe }}<span class="nav-text">Status</span></a>
+      <a class="nav-item" href="/accounts" data-tip="Accounts" data-tip-side="right" {% if l.nav == "accounts" %}aria-current="page"{% endif %}>{{ crate::assets::icon("users")|safe }}<span class="nav-text">Accounts</span></a>
+      <a class="nav-item" href="/groups" data-tip="Groups" data-tip-side="right" {% if l.nav == "groups" %}aria-current="page"{% endif %}>{{ crate::assets::icon("users-three")|safe }}<span class="nav-text">Groups</span></a>
+      <a class="nav-item" href="/bans" data-tip="Bans" data-tip-side="right" {% if l.nav == "bans" %}aria-current="page"{% endif %}>{{ crate::assets::icon("shield-check")|safe }}<span class="nav-text">Bans</span></a>
+      <div class="nav-label">Records</div>
+      <a class="nav-item" href="/activity" data-tip="Activity" data-tip-side="right" {% if l.nav == "activity" %}aria-current="page"{% endif %}>{{ crate::assets::icon("chart-line")|safe }}<span class="nav-text">Activity</span></a>
+      <a class="nav-item" href="/audit" data-tip="Audit log" data-tip-side="right" {% if l.nav == "audit" %}aria-current="page"{% endif %}>{{ crate::assets::icon("clipboard-text")|safe }}<span class="nav-text">Audit log</span></a>
+      <a class="nav-item" href="/logs" data-tip="Logs" data-tip-side="right" {% if l.nav == "logs" %}aria-current="page"{% endif %}>{{ crate::assets::icon("scroll")|safe }}<span class="nav-text">Logs</span></a>
+      <div class="nav-label">Configure</div>
+      <a class="nav-item" href="/settings" data-tip="Settings" data-tip-side="right" {% if l.nav == "settings" %}aria-current="page"{% endif %}>{{ crate::assets::icon("gear-six")|safe }}<span class="nav-text">Settings</span></a>
+      <a class="nav-item" href="/admins" data-tip="Admins" data-tip-side="right" {% if l.nav == "admins" %}aria-current="page"{% endif %}>{{ crate::assets::icon("user-gear")|safe }}<span class="nav-text">Admins</span></a>
+    </nav>
+    <div class="sidebar-foot">
+      <details class="user-menu">
+        <summary class="user-button" data-tip="{{ l.admin }}, {{ l.role_label }}" data-tip-side="right"><span class="avatar {{ l.tone }}">{{ l.initials }}</span><span class="user-text"><span class="user-name">{{ l.admin }}</span><span class="user-role">{{ l.role_label }}</span></span><span class="chev">{{ crate::assets::icon("caret-up-down")|safe }}</span></summary>
+        <div class="menu" role="menu">
+          <a class="menu-item" href="/me" role="menuitem">{{ crate::assets::icon("identification-badge")|safe }}Your account</a>
+          <div class="menu-row">Theme<div class="segmented" role="group" aria-label="Theme"><button type="button" data-theme-set="light" aria-pressed="false" aria-label="Light theme" data-tip="Light">{{ crate::assets::icon("sun")|safe }}</button><button type="button" data-theme-set="dark" aria-pressed="false" aria-label="Dark theme" data-tip="Dark">{{ crate::assets::icon("moon")|safe }}</button><button type="button" data-theme-set="system" aria-pressed="true" aria-label="Follow the system theme" data-tip="Follow the system">{{ crate::assets::icon("desktop")|safe }}</button></div></div>
+          <div class="menu-sep"></div>
+          <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ l.csrf }}"><button type="submit" class="menu-item" role="menuitem">{{ crate::assets::icon("sign-out")|safe }}Sign out</button></form>
+        </div>
+      </details>
+    </div>
+  </aside>
+  <div class="scrim" data-close-nav></div>
+  <div class="main-col">
+    <header class="topbar">
+      <button type="button" class="btn btn-ghost btn-icon menu-button" data-open-nav aria-label="Open the menu" data-tip="Open the menu">{{ crate::assets::icon("list")|safe }}</button>
+      <div class="title-block">{% block crumbs %}{% endblock %}<h1 class="page-title">{{ l.heading }}</h1></div>
+      <div class="topbar-actions">{% block actions %}{% endblock %}</div>
+    </header>
+    <main class="page">
+      {% for f in l.flash %}{% if f.kind == "invite" %}
+      <div class="alert info" role="status">{{ crate::assets::icon("link-simple")|safe }}<div class="alert-body"><span class="alert-title">{{ f.text }}</span>{% for d in f.detail %}<div class="copy-field"><code>{{ d }}</code><button type="button" class="btn btn-ghost btn-icon btn-sm" data-copy="{{ d }}" aria-label="Copy the link" data-tip="Copy the link">{{ crate::assets::icon("copy")|safe }}</button></div>{% endfor %}</div><button type="button" class="btn btn-ghost btn-icon btn-sm" data-dismiss aria-label="Dismiss" data-tip="Dismiss">{{ crate::assets::icon("x")|safe }}</button></div>
+      {% endif %}{% endfor %}
+      <div class="toasts">{% for f in l.flash %}{% if f.kind != "invite" %}
+        <div class="toast {{ f.kind }}" role="status">{% if f.kind == "error" %}{{ crate::assets::icon("x-circle-fill")|safe }}{% else %}{{ crate::assets::icon("check-circle-fill")|safe }}{% endif %}<div class="toast-body"><span class="toast-title">{{ f.text }}</span>{% if !f.detail.is_empty() %}<details class="more"><summary>What the server said</summary><pre>{% for d in f.detail %}{{ d }}
+{% endfor %}</pre></details>{% endif %}</div><button type="button" class="btn btn-ghost btn-icon btn-sm" data-dismiss aria-label="Dismiss" data-tip="Dismiss">{{ crate::assets::icon("x")|safe }}</button></div>
+      {% endif %}{% endfor %}</div>
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+</div>
+</body>
+{% endif %}
+</html>

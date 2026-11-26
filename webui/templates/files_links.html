@@ -1,0 +1,30 @@
+{% extends "files_base.html" %}
+{% block content %}
+<header class="topbar">
+  <button type="button" class="btn btn-ghost btn-icon menu-button" data-open-nav aria-label="Open the menu" data-tip="Open the menu">{{ crate::assets::icon("list")|safe }}</button>
+  <div class="title-block"><h1 class="page-title">Links you shared</h1></div>
+</header>
+<main class="page">
+  {% if !error.is_empty() %}<div class="alert bad" role="alert">{{ crate::assets::icon("warning-circle")|safe }}<div class="alert-body"><span class="alert-text">{{ error }}</span></div></div>{% endif %}
+  <section class="card">
+    <div class="table-wrap">
+      <table class="table stack">
+        <thead><tr><th>File</th><th>Made</th><th>Ends</th><th>State</th><th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
+        <tbody>
+        {% for r in rows %}
+          <tr>
+            <td class="lead"><span class="mono">{{ r.file }}</span>{% if r.password %} <span class="pill" data-tip="It asks for a password">{{ crate::assets::icon("lock-simple")|safe }}Password</span>{% endif %}</td>
+            <td data-label="Made">{{ r.made }}</td>
+            <td data-label="Ends">{{ r.ends }}</td>
+            <td data-label="State">{{ r.state }}</td>
+            <td class="actions"><form method="post" action="/links/revoke"><input type="hidden" name="csrf" value="{{ l.csrf }}"><input type="hidden" name="id" value="{{ r.id }}"><button type="submit" class="btn btn-ghost btn-sm danger" aria-label="End the link to {{ r.file }}" data-tip="End this link">{{ crate::assets::icon("link-break")|safe }}End</button></form></td>
+          </tr>
+        {% else %}
+          <tr><td colspan="5"><div class="empty">{{ crate::assets::icon("link-simple")|safe }}<span class="empty-title">No links yet</span><span>Share a file from its menu to make one.</span></div></td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+{% endblock %}

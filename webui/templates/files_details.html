@@ -1,0 +1,36 @@
+<div class="thumb">{% if d.preview == "image" %}<img src="./preview?path={{ d.path|urlencode }}" alt="" decoding="async">{% else %}<span class="file-icon lg {{ d.look.tone }}">{{ crate::assets::icon(d.look.icon)|safe }}</span>{% endif %}</div>
+<h3>{{ d.name }}</h3>
+<dl class="pairs">
+  <dt>Kind</dt><dd>{{ d.look.word }}</dd>
+  {% if !d.size.is_empty() %}<dt>{% if d.kind == "dir" %}Holds{% else %}Size{% endif %}</dt><dd>{{ d.size }}</dd>{% endif %}
+  {% if !d.iso.is_empty() %}<dt>Changed</dt><dd><time datetime="{{ d.iso }}">{{ d.modified }}</time></dd>{% endif %}
+  {% if !d.permissions.is_empty() %}<dt>Permissions</dt><dd class="mono">{{ d.permissions }}</dd>{% endif %}
+  {% if !d.target.is_empty() %}<dt>Points to</dt><dd class="mono">{{ d.target }}</dd>{% endif %}
+  {% if let Some(a) = d.added %}<dt>{% if a.kind == "mkdir" %}Made by{% else if a.kind == "rename" %}Moved here by{% else %}Added by{% endif %}</dt><dd>{% if a.actor.is_empty() %}{{ a.account }}{% else %}{{ a.actor }}{% endif %} from <span class="mono">{{ a.address }}</span> over {% if a.door == "web" %}the file browser{% else %}SFTP{% endif %}, <time datetime="{{ a.when_iso }}">{{ a.when }}</time></dd>{% endif %}
+  <dt>Path</dt><dd class="mono">{{ d.path }}</dd>
+</dl>
+{% if !d.history_note.is_empty() %}<p class="muted">{{ d.history_note }}</p>{% endif %}
+{% if !d.history.is_empty() %}
+<section aria-label="Activity">
+  <h4>Activity</h4>
+  <ul class="list">
+  {% for e in d.history %}<li class="list-row"><span class="door" data-tip="{% if e.door == "web" %}File browser{% else %}SFTP{% endif %}">{{ crate::assets::icon(e.icon)|safe }}</span><div class="list-main"><span class="list-title">{{ e.label }}{% if e.kind == "rename" %}{% if e.other == d.path %} from <span class="mono">{{ e.path }}</span>{% else %} to <span class="mono">{{ e.other }}</span>{% endif %}{% else if e.kind == "copy" %}{% if e.other == d.path %} to <span class="mono">{{ e.path }}</span>{% else %} from <span class="mono">{{ e.other }}</span>{% endif %}{% endif %}{% if !e.size.is_empty() %}, {{ e.size }}{% endif %}</span><span class="list-sub">{% if e.actor.is_empty() %}{{ e.account }}{% else %}{{ e.actor }}{% endif %} from <span class="mono">{{ e.address }}</span>, <time datetime="{{ e.when_iso }}">{{ e.when }}</time></span></div></li>{% endfor %}
+  </ul>
+  {% if let Some(o) = d.older %}<button type="button" class="btn btn-ghost btn-sm" hx-get="./details?path={{ d.path|urlencode }}&amp;before={{ o }}{% if d.here %}&amp;here=true{% endif %}" hx-target="#details" hx-swap="innerHTML">{{ crate::assets::icon("arrow-down")|safe }}Older activity</button>{% endif %}
+</section>
+{% endif %}
+{% if !d.here %}
+<div class="card-foot" data-fm-for="{{ d.path }}" data-kind="{{ d.kind }}" data-name="{{ d.name }}" data-preview="{{ d.preview }}" data-archive="{{ d.archive }}" data-size="{{ d.size }}">
+  {% if d.archive %}<button type="button" class="btn btn-ghost btn-icon btn-sm" data-fm-act="open" aria-label="Look inside {{ d.name }}" data-tip="Look inside">{{ crate::assets::icon("eye")|safe }}</button>{% endif %}
+  {% if d.kind == "file" %}<button type="button" class="btn btn-ghost btn-icon btn-sm" data-fm-act="share" aria-label="Share {{ d.name }}" data-tip="Share">{{ crate::assets::icon("share-network")|safe }}</button>{% endif %}
+  {% if !d.preview.is_empty() %}<button type="button" class="btn btn-ghost btn-icon btn-sm" data-fm-act="preview" aria-label="Preview {{ d.name }}" data-tip="Preview">{{ crate::assets::icon("eye")|safe }}</button>{% endif %}
+  {% if d.kind == "dir" %}<a class="btn btn-ghost btn-icon btn-sm" href="./?path={{ d.path|urlencode }}" aria-label="Open {{ d.name }}" data-tip="Open">{{ crate::assets::icon("folder-open")|safe }}</a>
+  <a class="btn btn-ghost btn-icon btn-sm" href="./zip?path={{ d.path|urlencode }}" hx-boost="false" download aria-label="Download {{ d.name }} as a zip file" data-tip="Download as a zip file">{{ crate::assets::icon("file-zip")|safe }}</a>
+  {% else if d.kind == "link" %}<a class="btn btn-ghost btn-icon btn-sm" href="./open?path={{ d.path|urlencode }}" hx-boost="false" aria-label="Open {{ d.name }}" data-tip="Open where it points">{{ crate::assets::icon("folder-open")|safe }}</a>
+  {% else %}<a class="btn btn-ghost btn-icon btn-sm" href="./download?path={{ d.path|urlencode }}" hx-boost="false" download aria-label="Download {{ d.name }}" data-tip="Download">{{ crate::assets::icon("download-simple")|safe }}</a>{% endif %}
+  <button type="button" class="btn btn-ghost btn-icon btn-sm" data-fm-act="rename" aria-label="Rename {{ d.name }}" data-tip="Rename">{{ crate::assets::icon("pencil-simple")|safe }}</button>
+  <button type="button" class="btn btn-ghost btn-icon btn-sm" data-fm-act="move" aria-label="Move {{ d.name }}" data-tip="Move">{{ crate::assets::icon("arrow-bend-up-right")|safe }}</button>
+  <button type="button" class="btn btn-ghost btn-icon btn-sm" data-fm-act="copy" aria-label="Copy {{ d.name }}" data-tip="Copy">{{ crate::assets::icon("copy-simple")|safe }}</button>
+  <button type="button" class="btn btn-ghost btn-icon btn-sm danger" data-fm-act="delete" aria-label="Delete {{ d.name }}" data-tip="Delete">{{ crate::assets::icon("trash")|safe }}</button>
+</div>
+{% endif %}

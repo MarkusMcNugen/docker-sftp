@@ -1,0 +1,24 @@
+{% extends "files_base.html" %}
+{% block content %}
+<header class="topbar">
+  <button type="button" class="btn btn-ghost btn-icon menu-button" data-open-nav aria-label="Open the menu" data-tip="Open the menu">{{ crate::assets::icon("list")|safe }}</button>
+  <nav class="crumbs-lg" aria-label="Folder"><a href="./" aria-label="{{ place.top }}" data-tip="{{ place.top }}">{{ crate::assets::icon("house")|safe }}</a>{% for c in crumbs %}<span class="sep">{{ crate::assets::icon("caret-right")|safe }}</span><a href="./?path={{ c.path|urlencode }}">{{ c.name }}</a>{% endfor %}<span class="sep">{{ crate::assets::icon("caret-right")|safe }}</span><span class="here">Search</span></nav>
+  <div class="topbar-actions">
+    <form class="search compact" action="./search" method="get" hx-boost="false" role="search">{{ crate::assets::icon("magnifying-glass")|safe }}<input type="hidden" name="path" value="{{ path }}"><input class="input" type="search" name="q" value="{{ q }}" placeholder="Search names" aria-label="Search file names in {{ here }} and below"></form>
+  </div>
+</header>
+<main class="page">
+  <section class="card">
+    <div class="toolbar"><span>Names holding <strong>{{ q }}</strong> in {{ here }} and the folders below it</span></div>
+    <div class="table-wrap">
+      <table class="table stack files-table search-table">
+        <thead><tr><th>Name</th><th>In</th><th class="opt-sm num">Size</th><th>Modified</th></tr></thead>
+        <tbody>
+<!--rows-->
+        </tbody>
+      </table>
+    </div>
+<!--summary-->
+  </section>
+</main>
+{% endblock %}

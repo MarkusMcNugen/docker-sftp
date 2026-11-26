@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block bare %}
+<div class="auth-card" data-share-page>
+  <div class="auth-brand">{{ crate::assets::BRAND|safe }}<span>sftp</span><span class="brand-tag">Files</span></div>
+  <div class="auth-head"><h1 class="auth-title" data-share-title>A shared file</h1><p class="auth-sub" data-share-sub>Reading the link</p></div>
+  <form method="post" action="/s/get" class="auth-form" data-share-form hidden>
+    <input type="hidden" name="login_token" value="{{ login_token }}">
+    <input type="hidden" name="token" value="">
+    <label class="field" data-share-password hidden><span class="field-label">Password</span><input class="input" type="password" name="password" autocomplete="off"></label>
+    <button type="submit" class="btn btn-primary btn-block">{{ crate::assets::icon("download-simple")|safe }}Download</button>
+    <p class="field-hint">The link works for one download.</p>
+  </form>
+</div>
+{% endblock %}

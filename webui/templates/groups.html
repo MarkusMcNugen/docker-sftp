@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block actions %}{% call m::help("A group gives its members defaults. Across several groups, grants add up and limits take the strictest; an account's own settings win.") %}{% endcall %}{% if l.full %}<a class="btn btn-primary" href="/groups/new">{{ crate::assets::icon("users-three")|safe }}New group</a>{% endif %}{% endblock %}
+{% block content %}
+<section class="card">
+  <div class="toolbar"><label class="search">{{ crate::assets::icon("magnifying-glass")|safe }}<input class="input" type="search" placeholder="Filter by name" aria-label="Filter groups by name" data-filter="groups-table"></label><span class="muted" data-filter-count="groups-table" data-one="group" data-many="groups">{% if rows.len() == 1 %}1 group{% else %}{{ rows.len() }} groups{% endif %}</span></div>
+  <div class="table-wrap"><table class="table stack" id="groups-table">
+    <thead><tr>{% call m::sort("Group", "") %}{% endcall %}{% call m::sort("Members", "number") %}{% endcall %}{% call m::sort("Access", "") %}{% endcall %}{% call m::sort_in("Files' group", "number", "opt-sm") %}{% endcall %}</tr></thead>
+    <tbody>
+    {% for g in rows %}
+      <tr>
+        <td class="lead" data-sort="{{ g.name }}"><span class="cell-user"><span class="avatar sm {{ crate::pages::tone(g.name) }}">{{ crate::assets::icon("users-three")|safe }}</span><a class="name" href="/groups/{{ g.name }}">{{ g.name }}</a></span></td>
+        <td class="num" data-label="Members" data-sort="{{ g.members }}">{{ g.members }}</td>
+        <td data-label="Access">{% if g.access == "No default" %}<span class="muted" data-tip="Members keep their own permissions">{{ g.access }}</span>{% else %}{{ g.access }}{% endif %}</td>
+        <td class="opt-sm" data-label="Files' group" data-sort="{{ g.gid }}">{% if g.gid.is_empty() %}<span class="muted">None</span>{% else %}<code>{{ g.gid }}</code>{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4"><div class="empty">{{ crate::assets::icon("users-three")|safe }}<span class="empty-title">No groups yet</span><span>Groups live in /config/sshd/groups.conf; accounts join with group= on their line.</span></div></td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <div class="empty" data-filter-empty="groups-table" hidden>{{ crate::assets::icon("magnifying-glass")|safe }}<span class="empty-title">No group matches</span></div>
+</section>
+{% endblock %}

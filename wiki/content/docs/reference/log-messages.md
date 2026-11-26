@@ -55,6 +55,10 @@ Warnings, each with what it means:
 | `rsyslogd did not create /home/x/dev/log, so transfers in that chroot are not logged. ...` | a host security policy confines rsyslogd |
 | `/config/sshd/sshd_config replaces the whole built-in sshd configuration, ...` | an edited 1.x file is in use |
 | `/config/fail2ban/fail2ban.conf was written by a 1.x image and is no longer read; ...` | followed by `renamed ... to ....legacy` |
+| `user x: manage=y names no account or group, so it grants nothing` | a `manage=` target that does not exist |
+| `country rules are not enforced: the firewall refused them (...). Start the container with --cap-add=NET_ADMIN.` | `NET_ADMIN` is missing, or nftables refused the rules for the reason in brackets; the Bans page shows the same |
+| `country rules: cannot exempt a never-ban entry: gateway.example ...` | the never-ban list holds a host name, which the firewall cannot match |
+| `MaxMind GeoLite2 was not downloaded, so the country rules read the previous copy or DB-IP Lite: ...` | a MaxMind key is set but the download failed, for the reason given |
 | `sshd exited with status N; stopping the container` | a service died |
 
 Fatal messages are listed in [How To Fix A Failure](../../how-to/fix-a-failure/).

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block crumbs %}{% if !account.is_empty() %}<nav class="crumbs" aria-label="Breadcrumb"><a href="/activity">Activity</a>{{ crate::assets::icon("caret-right")|safe }}</nav>{% endif %}{% endblock %}
+{% block actions %}{% if account.is_empty() %}<form method="get" action="/activity" class="segmented text" role="group" aria-label="Show"><button type="submit" name="view" value="people" aria-pressed="{{ view_people }}" data-tip="Who is connected now or was active in the last 24 hours">People</button><button type="submit" name="view" value="log" aria-pressed="{{ !view_people }}" data-tip="Every event, newest first">Log</button></form>{% endif %}{% if first %}<label class="switch live-toggle" data-tip="New activity appears at the top as it happens"><input type="checkbox" role="switch" data-autorefresh checked aria-label="Show new activity as it happens"><span class="switch-text"><span class="switch-title live">Live</span></span></label>{% endif %}{% call m::help("Every sign-in and file operation over SFTP and rsync, with the real address; kept for as long as the server runs") %}{% endcall %}{% if !account.is_empty() && l.full %}<a class="btn btn-secondary" href="/accounts/{{ account }}" data-tip="Account settings">{{ crate::assets::icon("gear-six")|safe }}<span class="label">Settings</span></a>{% endif %}{% endblock %}
+{% block content %}
+{% if view_people %}
+{% if let Some(e) = people_error %}<div class="alert warn">{{ crate::assets::icon("warning-circle-fill")|safe }}<div class="alert-body"><span class="alert-title">Activity is unavailable</span><span class="alert-text">{{ e }}</span></div></div>{% endif %}
+<div class="people" id="people" data-follow hx-get="/activity/people" hx-trigger="every 10s" hx-swap="innerHTML">{% include "activity_people.html" %}</div>
+{% else %}
+<section class="card">
+  <div class="filters">
+    <div class="segmented text" role="group" aria-label="Door" data-filter="activity-table" data-filter-key="door"><button type="button" aria-pressed="true" data-value="">All</button><button type="button" aria-pressed="false" data-value="ssh" aria-label="SFTP and rsync over SSH" data-tip="SFTP and rsync over SSH">{{ crate::assets::icon("terminal-window")|safe }}</button><button type="button" aria-pressed="false" data-value="web" aria-label="File browser" data-tip="File browser">{{ crate::assets::icon("globe-hemisphere-west")|safe }}</button></div>
+    <select class="select" aria-label="Operation" data-filter="activity-table" data-filter-key="kind"><option value="">Every operation</option><option value="browse">Browsing</option><option value="upload">Uploads</option><option value="download">Downloads</option><option value="delete">Deletes</option><option value="rename">Renames</option><option value="login_ok">Sign-ins</option><option value="login_failed">Failed sign-ins</option></select>
+    {% if account.is_empty() %}<label class="search">{{ crate::assets::icon("magnifying-glass")|safe }}<input class="input" type="search" placeholder="Account" aria-label="Filter by account" data-filter="activity-table"></label>{% endif %}
+  </div>
+  {% if first %}<div id="activity-poll" hidden data-follow data-after="#activity-table tbody" hx-get="/activity/rows?account={{ account|urlencode }}" hx-trigger="every 3s" hx-target="#activity-table tbody" hx-swap="afterbegin"></div>{% endif %}
+  <div class="table-wrap"><table class="table stack" id="activity-table">
+    <thead><tr>{% call m::sort("When", "number") %}{% endcall %}{% call m::sort("Account", "") %}{% endcall %}{% call m::sort("Door", "") %}{% endcall %}{% call m::sort("Operation", "") %}{% endcall %}<th>Path</th>{% call m::sort_in("Size", "number", "opt-sm") %}{% endcall %}<th class="opt-md">From</th></tr></thead>
+    <tbody>
+    {% include "activity_rows.html" %}
+    {% if rows.is_empty() %}<tr data-empty><td colspan="7"><div class="empty">{{ crate::assets::icon("clock-counter-clockwise")|safe }}<span class="empty-title">No activity yet</span><span>Sign-ins and file operations appear here as they happen.</span></div></td></tr>{% endif %}
+    </tbody>
+  </table></div>
+  <div class="empty" data-filter-empty="activity-table" hidden>{{ crate::assets::icon("magnifying-glass")|safe }}<span class="empty-title">Nothing matches</span></div>
+  <div class="pager"><span class="note">Newest first</span><span class="row-actions">{% if !first %}<a class="btn btn-ghost btn-sm" href="/activity?account={{ account|urlencode }}">{{ crate::assets::icon("caret-left")|safe }}Newest</a>{% endif %}{% if let Some(older) = older %}<a class="btn btn-ghost btn-sm" href="/activity?account={{ account|urlencode }}&amp;before={{ older }}">Older{{ crate::assets::icon("caret-right")|safe }}</a>{% endif %}</span></div>
+</section>
+{% endif %}
+{% endblock %}

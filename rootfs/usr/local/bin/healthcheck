@@ -12,14 +12,31 @@ if [[ ! -s $RUN_DIR/ports ]]; then
     exit 1
 fi
 
+# st 0A is LISTEN in /proc/net/tcp and /proc/net/tcp6.
+listening() {
+    local hex
+    hex=$(printf '%04X' "$1")
+    grep -qsE "^ *[0-9]+: [0-9A-F]+:${hex} [0-9A-F]+:[0-9A-F]+ 0A " /proc/net/tcp /proc/net/tcp6
+}
+
 while read -r port; do
-    hex=$(printf '%04X' "$port")
-    # st 0A is LISTEN in /proc/net/tcp and /proc/net/tcp6.
-    if ! grep -qsE "^ *[0-9]+: [0-9A-F]+:${hex} [0-9A-F]+:[0-9A-F]+ 0A " /proc/net/tcp /proc/net/tcp6; then
+    if ! listening "$port"; then
         echo "sshd is not listening on port $port"
         exit 1
     fi
 done <"$RUN_DIR/ports"
+
+if [[ -s $RUN_DIR/webui-port ]]; then
+    read -r port <"$RUN_DIR/webui-port"
+    if ! listening "$port"; then
+        echo "the web UI is not listening on port $port"
+        exit 1
+    fi
+    if [[ ! -S /run/sftp-webui/helper.sock ]]; then
+        echo "the web UI helper is not running"
+        exit 1
+    fi
+fi
 
 if [[ -e $RUN_DIR/fail2ban-enabled ]]; then
     if [[ ! -S /run/fail2ban/fail2ban.sock || ! -s /run/fail2ban/fail2ban.pid ]]; then

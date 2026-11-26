@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <form method="get" action="/logs" class="toolbar">
+    <label class="search">{{ crate::assets::icon("magnifying-glass")|safe }}<input class="input" type="search" name="q" value="{{ q }}" placeholder="Search auth.log and auth.log.1" aria-label="Search the logs"></label>
+    <button type="submit" class="btn btn-secondary">{{ crate::assets::icon("magnifying-glass")|safe }}Search</button>
+    {% if first %}<label class="switch" data-tip="Show new lines as they arrive"><input type="checkbox" role="switch" data-autorefresh checked><span class="switch-text"><span class="switch-title">Follow</span></span></label>{% endif %}
+  </form>
+  <div class="log" id="poll-logs" data-follow {% if first %}hx-get="/logs/rows?q={{ q|urlencode }}" hx-trigger="every 5s" hx-swap="innerHTML"{% endif %}>{% include "logs_rows.html" %}</div>
+  <div class="pager"><span class="note">{% if first %}The newest lines{% else %}Older lines{% endif %}</span><span class="row-actions">{% if !first %}<a class="btn btn-ghost btn-sm" href="/logs?q={{ q|urlencode }}">{{ crate::assets::icon("caret-left")|safe }}Newest</a>{% endif %}{% if let Some(older) = page.older %}<a class="btn btn-ghost btn-sm" href="/logs?q={{ q|urlencode }}&amp;before={{ older }}">Older{{ crate::assets::icon("caret-right")|safe }}</a>{% endif %}</span></div>
+</section>
+{% endblock %}

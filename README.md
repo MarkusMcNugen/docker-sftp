@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/MarkusMcNugen/docker-templates/master/sftp/SFTP.png" alt="SFTP logo" width="240"/>
+<img src="https://raw.githubusercontent.com/MarkusMcNugen/docker-sftp/main/.github/logo.png" alt="SFTP logo" width="200"/>
 
 # SFTP
 
@@ -52,9 +52,16 @@ Each account is jailed in its home directory, fail2ban bans password guessers, a
 - Post-quantum hybrid key exchange first; SHA-1, CBC, MD5 and 64-bit MACs refused.
 - [fail2ban bans](https://markusmcnugen.github.io/docker-sftp/docs/how-to/tune-fail2ban/) that double for repeat offenders and survive restarts.
 - [Accounts](https://markusmcnugen.github.io/docker-sftp/docs/how-to/add-users/) from a file, an environment variable, a Docker secret or the command line, with plain or [hashed passwords](https://markusmcnugen.github.io/docker-sftp/docs/how-to/use-hashed-passwords/).
-- Every start reconciles accounts: a changed password, a removed user or a revoked key takes effect on restart.
+- Every start and every apply reconciles accounts: a changed password, a removed user or a revoked key takes effect at once.
 - [Public keys](https://markusmcnugen.github.io/docker-sftp/docs/how-to/use-public-keys/) installed root-owned outside the jail, where users cannot add their own.
 - [rsync over SSH](https://markusmcnugen.github.io/docker-sftp/docs/how-to/allow-rsync/) for chosen accounts, inside their jails.
+- [Permissions per account](https://markusmcnugen.github.io/docker-sftp/docs/how-to/set-account-permissions/): read-only, upload-only or a custom set, plus disabled, expiry dates, allowed networks and a umask.
+- An optional [admin web UI](https://markusmcnugen.github.io/docker-sftp/docs/how-to/use-the-web-ui/) behind argon2id passwords and TOTP codes, with named admins, read-only roles and an audit log.
+- An optional [file browser](https://markusmcnugen.github.io/docker-sftp/docs/how-to/use-the-file-browser/) on its own port, behind a web password and two-factor, that works through SFTP with each account's own permissions: uploads of any size, previews, zip downloads, search and single-use share links.
+- [Groups](https://markusmcnugen.github.io/docker-sftp/docs/how-to/group-accounts/) that give their members defaults, and managers who open other accounts' files.
+- [Country rules](https://markusmcnugen.github.io/docker-sftp/docs/how-to/block-countries/) that drop connections from chosen countries, with DB-IP Lite in the image or MaxMind GeoLite2 with a free key.
+- A permanent history of sign-ins, file operations and bans, shown live on the web UI's Activity page.
+- [Changes apply live](https://markusmcnugen.github.io/docker-sftp/docs/how-to/apply-changes-live/), without a restart and without dropping open sessions.
 - An optional [log of every file operation](https://markusmcnugen.github.io/docker-sftp/docs/how-to/log-transfers/).
 - A configuration mistake stops the container with one line naming it.
 - Exits when any service dies, stops in under a second, and reports its health.
@@ -92,7 +99,7 @@ Running `sshd` for file transfer alone takes a chroot that sshd will accept, key
 One line per account, in `/config/sshd/users.conf`:
 
 ```
-name:password[:e][:uid[:gid[:dir1,dir2,...[:rsync]]]]
+name:password[:e][:uid[:gid[:dir1,dir2,...[:options]]]]
 ```
 
 ```text
@@ -101,7 +108,7 @@ bob::1002:100:inbox,outbox
 carol:$y$j9T$6IoIpga7qoVTKEtg7uOmk.$wqs4plcBkLh9AkLUNTXVh2MqiT4GaFcVqfk.9yQ.N/0:e:1003
 ```
 
-Bob has no password and logs in with the key in `/config/userkeys/bob.pub`. Carol's password is a hash from `docker run --rm -it markusmcnugen/sftp mkpasswd -m yescrypt`. The grammar, the other sources of accounts and every rule are in [users.conf](https://markusmcnugen.github.io/docker-sftp/docs/reference/users-conf/).
+Bob has no password and logs in with the key in `/config/userkeys/bob.pub`. Carol's password is a hash from `docker run --rm -it markusmcnugen/sftp mkpasswd -m yescrypt`. Options at the end of a line set permissions, rsync, file browser access, groups and limits. The grammar, the options, the other sources of accounts and every rule are in [users.conf](https://markusmcnugen.github.io/docker-sftp/docs/reference/users-conf/).
 
 ## Settings
 
@@ -120,14 +127,19 @@ Bob has no password and logs in with the key in `/config/userkeys/bob.pub`. Caro
 | `SFTP_RSYNC_USERS` | | Accounts allowed rsync over SSH, or `*` for all |
 | `FAIL2BAN_ENABLED` | `true` | `false` runs without fail2ban |
 | `TZ` | `UTC` | Time zone for log timestamps |
+| `WEBUI_ENABLED` | `false` | Runs the admin web UI, on `WEBUI_PORT` (`8443`) |
+| `WEBUI_FILES_ENABLED` | `false` | Runs the file browser, on `WEBUI_FILES_PORT` (`8444`) |
+| `SFTP_COUNTRY_RULE` | `off` | `block` or `allow` the countries in `SFTP_COUNTRIES` |
+| `SFTP_COUNTRIES` | `CN IN BR RU VN` | Two-letter country codes for the rule |
 
 </details>
 
-sshd settings go in `/config/sshd/sshd_config.d/*.conf` and fail2ban settings in `/config/fail2ban/jail.local`. The [Environment Variables](https://markusmcnugen.github.io/docker-sftp/docs/reference/environment-variables/) and [/config Volume](https://markusmcnugen.github.io/docker-sftp/docs/reference/config-volume/) references list every value and path.
+The web UI's Settings page writes the server settings to `/config/sshd/settings.conf`; a variable set in the environment wins. sshd settings go in `/config/sshd/sshd_config.d/*.conf` and fail2ban settings in `/config/fail2ban/jail.local`. The [Environment Variables](https://markusmcnugen.github.io/docker-sftp/docs/reference/environment-variables/) and [/config Volume](https://markusmcnugen.github.io/docker-sftp/docs/reference/config-volume/) references list every value and path.
 
 ## Security
 
-- fail2ban bans by adding firewall rules inside the container's network namespace, which needs `NET_ADMIN` and `NET_RAW`. Without them it detects attacks but cannot block them, and the log says so at start.
+- fail2ban bans by adding firewall rules inside the container's network namespace, which needs `NET_ADMIN` and `NET_RAW`. Without them it detects attacks but cannot block them, and the log says so at start. The country rules need `NET_ADMIN` as well.
+- The web UI and the file browser run as unprivileged users and change the server only through a root helper that takes a fixed list of checked requests. The file browser reaches files through SFTP with certificates that last five minutes, so each account's permissions and jail apply there too.
 - Bans need the client's real address. Docker's port publishing keeps it; a reverse proxy, a load balancer or Docker's userland proxy replaces it with its own, and one attacker then gets everyone banned.
 - The `modern` crypto policy keeps plain `hmac-sha2-256` and `hmac-sha2-512` last in the list of MACs (message authentication codes, which detect tampering) for clients without encrypt-then-MAC, such as paramiko. `SFTP_CRYPTO_POLICY=strict` removes them.
 - Anyone who can write `/config` controls the accounts and runs startup scripts as root.
@@ -149,7 +161,9 @@ Point the image at the existing `/config`. `users.conf`, host keys, user keys an
 | `rootfs/etc/fail2ban/` | the built-in jail and server settings |
 | `rootfs/etc/rsyslog.conf` | log routing to the container log and the auth log |
 | `rootfs/usr/local/lib/sftp/legacy-defaults.sha256` | hashes of the 1.x default files, for upgrades |
-| `tests/run-tests.sh` | the integration suite |
+| `rootfs/usr/local/libexec/sftp/rsync-gate` | the login shell of accounts allowed rsync |
+| `webui/` | the admin web UI, the file browser and their root helper, in Rust |
+| `tests/run-tests.sh` | the integration suite, with `tests/webui_driver.py` for the web UI |
 | `tests/fixtures/legacy-1.x/` | the 1.x default `sshd_config` and `jail.conf` |
 | `wiki/` | the Hugo site with the tutorial, how-to guides, explanations and reference |
 | `.github/workflows/` | the release build and the wiki deployment |
@@ -164,7 +178,7 @@ tests/run-tests.sh sftp                     # ENGINE=podman for Podman
 SCENARIOS="main options" tests/run-tests.sh sftp
 ```
 
-The suite starts real servers on a private network and drives them with OpenSSH clients from other containers: password, hash and key logins, the jail, refused shells, forwarding and weak crypto, transfer logs, bans, log rotation, reconciliation across a restart, the minimal capability set, 1.x migration, and refused configurations. [How To Build And Test The Image](https://markusmcnugen.github.io/docker-sftp/docs/how-to/build-and-test/) describes each scenario.
+The suite starts real servers on a private network and drives them with OpenSSH clients from other containers: password, hash and key logins, the jail, refused shells, forwarding and weak crypto, transfer logs, bans, log rotation, reconciliation across a restart, permissions and groups, the country rules, live apply, the admin web UI and the file browser over HTTPS, the minimal capability set, 1.x migration, and refused configurations. [How To Build And Test The Image](https://markusmcnugen.github.io/docker-sftp/docs/how-to/build-and-test/) describes each scenario.
 
 `.github/workflows/release.yml` runs on a `v*` tag, every week, and by hand. It lints, runs the suite on a native x86 runner and a native arm64 runner, scans with Trivy, and publishes to Docker Hub and GHCR with an SBOM and provenance.
 
@@ -179,7 +193,7 @@ The suite starts real servers on a private network and drives them with OpenSSH 
 The documentation site is at **[markusmcnugen.github.io/docker-sftp](https://markusmcnugen.github.io/docker-sftp/)**, built from [`wiki/`](https://github.com/MarkusMcNugen/docker-sftp/tree/main/wiki) by `.github/workflows/wiki-deploy.yml` on every push to main. It is a Hugo site using the Hextra theme, organized by the Diataxis framework:
 
 - a tutorial that builds a first server, from an empty folder to key logins and a ban;
-- thirteen how-to guides: users, hashed passwords, public keys, shared folders, sshd settings, fail2ban, transfer logs, rsync, hardening, Unraid, upgrading from 1.x, building and testing, and fixing failures;
+- nineteen how-to guides: users, hashed passwords, public keys, permissions, groups, shared folders, applying changes live, sshd settings, fail2ban, transfer logs, rsync, hardening, Unraid, upgrading from 1.x, the admin web UI, the file browser, country rules, building and testing, and fixing failures;
 - two explanations: how the container works, and the security model;
 - six reference pages: environment variables, users.conf, the /config volume, commands, built-in settings, and log messages.
 
@@ -188,6 +202,9 @@ The documentation site is at **[markusmcnugen.github.io/docker-sftp](https://mar
 - **[atmoz/sftp](https://github.com/atmoz/sftp)**, which this project was forked from, set the account line format that `users.conf` still uses.
 - **[OpenSSH](https://www.openssh.com/)** provides the server, the chroot and `internal-sftp`; **[fail2ban](https://github.com/fail2ban/fail2ban)** the bans; **[rsyslog](https://www.rsyslog.com/)** the log routing; **[tini](https://github.com/krallin/tini)** process 1.
 - **[ssh-audit](https://github.com/jtesta/ssh-audit)**'s hardening guides shaped the crypto policy.
+- [IP Geolocation by DB-IP](https://db-ip.com): the image carries DB-IP's IP to Country Lite database, licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+- With a MaxMind key, this product includes GeoLite2 data created by MaxMind, available from [maxmind.com](https://www.maxmind.com).
+- The web UI bundles **[htmx](https://htmx.org)** (0BSD), **[Phosphor Icons](https://phosphoricons.com)** (MIT), **[flag-icons](https://github.com/lipis/flag-icons)** (MIT) and the **[Geist](https://vercel.com/font)** fonts (SIL Open Font License 1.1); their licenses are in `webui/assets/licenses/`.
 - **[Hextra](https://github.com/imfing/hextra)** is the wiki's theme.
 
 ## Use of AI tools

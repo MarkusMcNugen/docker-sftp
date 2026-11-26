@@ -1,0 +1,18 @@
+<div class="toolbar fm-bar"><span class="muted">{{ summary }}</span><form method="post" action="./archive/extract"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="path" value="{{ path }}"><button type="submit" class="btn btn-secondary btn-sm" data-tip="Unpack beside the archive; a name already there is left as it is">{{ crate::assets::icon("folder-open")|safe }}Unpack here</button></form></div>
+<div class="table-wrap">
+  <table class="table archive-table">
+    <thead><tr><th>Name</th><th class="num">Size</th><th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
+    <tbody>
+    {% for e in rows %}
+      <tr>
+        <td class="lead"><div class="file-name"><span class="file-icon {{ e.look.tone }}">{{ crate::assets::icon(e.look.icon)|safe }}</span><span class="name">{{ e.name }}</span></div></td>
+        <td class="num">{% if e.dir %}<span class="muted">Folder</span>{% else %}{{ e.size }}{% endif %}</td>
+        <td class="actions">{% if !e.why.is_empty() %}<span class="pill warn" data-tip="{{ e.why }}">{{ crate::assets::icon("warning-circle")|safe }}Not unpacked</span>{% else if !e.dir %}<a class="btn btn-ghost btn-icon btn-sm" href="./archive/entry?path={{ path|urlencode }}&amp;entry={{ e.index }}" hx-boost="false" download aria-label="Download {{ e.name }}" data-tip="Download this file">{{ crate::assets::icon("download-simple")|safe }}</a>{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="3">This archive is empty.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="modal-foot"><span class="note">Listed without unpacking. An entry whose path would leave the folder is never unpacked.</span></div>

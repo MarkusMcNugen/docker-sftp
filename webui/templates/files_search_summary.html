@@ -1,0 +1,3 @@
+<div class="pager" role="status"><span class="note">{% if found == 0 %}No names hold {{ q }}{% else %}{{ found_label }}{% endif %}, in {{ folders_label }} searched.</span></div>
+{% if !unreadable.is_empty() %}<div class="alert warn">{{ crate::assets::icon("warning-circle")|safe }}<div class="alert-body"><span class="alert-title">{{ unreadable_label }} could not be searched</span><ul class="fm-names">{% for u in unreadable %}<li>{{ u }}</li>{% endfor %}</ul></div></div>{% endif %}
+{% if !failed.is_empty() %}<div class="alert bad" role="alert">{{ crate::assets::icon("warning-circle")|safe }}<div class="alert-body"><span class="alert-text">The search stopped early: {{ failed }}</span></div></div>{% endif %}

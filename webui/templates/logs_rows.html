@@ -1,0 +1,1 @@
+{% for line in page.lines %}<div class="log-line raw"><span class="log-msg">{{ line }}</span></div>{% else %}<div class="empty">{{ crate::assets::icon("magnifying-glass")|safe }}<span class="empty-title">No matching lines</span></div>{% endfor %}

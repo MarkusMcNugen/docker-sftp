@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block actions %}{% if l.full %}<a class="btn btn-primary" href="/accounts/new">{{ crate::assets::icon("user-plus")|safe }}New account</a>{% endif %}{% endblock %}
+{% block content %}
+{% if plain > 0 %}
+<div class="alert warn">{{ crate::assets::icon("shield-warning")|safe }}<div class="alert-body"><span class="alert-title">{% if plain == 1 %}1 account has a plain-text password{% else %}{{ plain }} accounts have plain-text passwords{% endif %}</span><span class="alert-text">Anyone who can read /config can read {% if plain == 1 %}it{% else %}them{% endif %}.</span></div>
+  {% if l.full %}<div class="alert-actions"><form method="post" action="/accounts/hash-passwords" hx-confirm="Replace every plain-text password in users.conf with a hash? The same passwords keep working."><input type="hidden" name="csrf" value="{{ l.csrf }}"><button type="submit" class="btn btn-secondary btn-sm" data-tip="Replace them with hashes; the same passwords keep working">{{ crate::assets::icon("lock-simple")|safe }}Hash passwords</button></form></div>{% endif %}
+</div>
+{% endif %}
+<section class="card">
+  <div class="toolbar"><label class="search">{{ crate::assets::icon("magnifying-glass")|safe }}<input class="input" type="search" placeholder="Filter by name" aria-label="Filter accounts by name" data-filter="accounts-table"></label><span class="muted">{% if rows.len() == 1 %}1 account{% else %}{{ rows.len() }} accounts{% endif %}</span></div>
+  <div class="table-wrap"><table class="table stack" id="accounts-table">
+    <thead><tr>{% call m::sort("Account", "") %}{% endcall %}{% call m::sort("Access", "") %}{% endcall %}{% call m::sort("Logs in with", "number") %}{% endcall %}<th class="opt-sm">Directories</th><th class="opt-md sortable" data-type="number"><button type="button" class="th-sort">IDs<span class="s-none">{{ crate::assets::icon("arrows-down-up")|safe }}</span><span class="s-asc">{{ crate::assets::icon("arrow-up")|safe }}</span><span class="s-desc">{{ crate::assets::icon("arrow-down")|safe }}</span></button></th><th class="opt-md">Defined in</th><th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
+    <tbody>
+    {% for a in rows %}
+      <tr>
+        <td class="lead" data-sort="{{ a.name }}"><div class="cell-user"><span class="avatar sm {{ crate::pages::tone(a.name) }}"{% if a.sessions > 0 %} data-tip="{% if a.sessions == 1 %}Connected now, 1 session{% else %}Connected now, {{ a.sessions }} sessions{% endif %}"{% endif %}>{{ crate::pages::initials(a.name) }}{% if a.sessions > 0 %}<span class="presence"></span>{% endif %}</span><a class="name" href="/accounts/{{ a.name }}">{{ a.name }}</a>{% if a.disabled %}<span class="pill" data-tip="Logins are refused; files and keys are kept">{{ crate::assets::icon("prohibit")|safe }}Disabled</span>{% endif %}{% if a.expired %}<span class="pill bad" data-tip="Expired on {{ a.expires }}; logins are refused">{{ crate::assets::icon("calendar-x")|safe }}Expired</span>{% endif %}</div></td>
+        <td data-label="Access" data-sort="{{ a.preset }}"><span class="inline-set"><span class="pill">{{ a.preset }}</span><span class="meta-icons">{% if a.rsync %}<span role="img" aria-label="Can use rsync" data-tip="Can use rsync">{{ crate::assets::icon("arrows-left-right")|safe }}</span>{% endif %}{% if a.limited %}<span role="img" aria-label="Limited to some networks" data-tip="Limited to some networks">{{ crate::assets::icon("globe-hemisphere-west")|safe }}</span>{% endif %}{% if !a.expires.is_empty() && !a.expired %}<span role="img" aria-label="Expires on {{ a.expires }}" data-tip="Expires on {{ a.expires }}">{{ crate::assets::icon("calendar-blank")|safe }}</span>{% endif %}</span></span></td>
+        <td data-label="Logs in with" data-sort="{{ a.keys }}"><span class="inline-set">{% if a.password == "plain" %}<span class="pill warn" data-tip="Password stored as plain text in users.conf">{{ crate::assets::icon("warning-circle")|safe }}Plain text</span>{% else if a.password == "hashed" || a.password == "set" %}<span class="meta" role="img" aria-label="Password" data-tip="Password, stored as a hash">{{ crate::assets::icon("lock-simple")|safe }}</span>{% endif %}{% if a.keys > 0 %}<span class="meta" data-tip="{% if a.keys == 1 %}1 public key{% else %}{{ a.keys }} public keys{% endif %}">{{ crate::assets::icon("key")|safe }}{{ a.keys }}</span>{% endif %}{% if a.password == "none" && a.keys == 0 %}<span class="pill bad" data-tip="It cannot log in until it gets a password or a key">{{ crate::assets::icon("warning-circle")|safe }}No way in</span>{% endif %}</span></td>
+        <td class="opt-sm" data-label="Directories"><span class="chip">{{ a.dirs }}</span></td>
+        <td class="opt-md mono muted" data-label="IDs" data-sort="{{ a.uid }}" data-tip="User {{ a.uid }}, group {{ a.gid }}">{{ a.uid }}:{{ a.gid }}</td>
+        <td class="opt-md muted" data-label="Defined in">{% if a.editable %}{{ a.source }}{% else %}<span class="meta" data-tip="Not changed by the web UI; edit it in {{ a.source }}">{{ crate::assets::icon("lock-simple")|safe }}{{ a.source }}</span>{% endif %}</td>
+        <td class="actions"><a class="btn btn-ghost btn-icon btn-sm" href="/accounts/{{ a.name }}" aria-label="{% if a.editable && l.full %}Edit{% else %}View{% endif %} {{ a.name }}" data-tip="{% if a.editable && l.full %}Edit{% else %}View{% endif %} {{ a.name }}">{% if a.editable && l.full %}{{ crate::assets::icon("pencil-simple")|safe }}{% else %}{{ crate::assets::icon("eye")|safe }}{% endif %}</a></td>
+      </tr>
+    {% else %}
+      <tr><td colspan="7"><div class="empty">{{ crate::assets::icon("users")|safe }}<span class="empty-title">No accounts yet</span>{% if l.full %}<span>Create one with New account.</span>{% endif %}</div></td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endblock %}

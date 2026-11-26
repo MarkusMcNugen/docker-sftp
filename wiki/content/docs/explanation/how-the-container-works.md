@@ -10,9 +10,16 @@ tini                      process 1: forwards signals, reaps exited processes
 └─ entrypoint (bash)      builds the configuration, then supervises
    ├─ rsyslogd            receives log messages on /dev/log
    ├─ auth-log rotation   a loop in the entrypoint, when the cap is on
+   ├─ GeoLite2 refresh    a loop in the entrypoint, every six hours
    ├─ fail2ban-server     reads /var/log/auth.log, adds firewall rules
-   └─ sshd                the SFTP server
+   ├─ sshd                the SFTP server
+   ├─ sshd (loopback)     the file browser's SFTP server, on 127.0.0.1:2299
+   ├─ sftp-helper         as root: the web UI's requests, and the history
+   ├─ sftp-webui serve    the admin web UI, as the user sftp-webui
+   └─ sftp-webui files    the file browser, as the user sftp-files
 ```
+
+The last four run only with the web UI on, and the loopback sshd and the file browser only with the file browser on.
 
 The entrypoint waits for any of its children to exit. When one does, it stops the others and exits non-zero, so Docker's restart policy brings back a complete server rather than one with a service missing. On `docker stop`, tini passes the signal to the entrypoint, which stops sshd and fail2ban first and rsyslog last, so their shutdown is still logged. A stop takes under a second.
 
@@ -25,9 +32,10 @@ The entrypoint waits for any of its children to exit. When one does, it stops th
 5. **Accounts.** Accounts that are no longer configured are deleted. Every configured account is created or brought up to date: uid, gid, password, home directory, directories, keys.
 6. **Startup scripts** in `/config/sshd/scripts/` run.
 7. **Checks.** `sshd -t` validates the sshd configuration, and the ports it will listen on are recorded for the health check.
-8. **Transfer logging**, when on, prepares a log socket in each jail.
-9. **fail2ban.** Files from `/config/fail2ban/` are installed, `fail2ban-client --test` validates them, and the firewall backend is chosen.
-10. **Services start**: rsyslog, the rotation loop, fail2ban, sshd.
+8. **Country rules**, when on, are loaded into nftables ([How To Block Countries](../../how-to/block-countries/)).
+9. **Transfer logging**, when on, prepares a log socket in each jail.
+10. **fail2ban.** Files from `/config/fail2ban/` are installed, `fail2ban-client --test` validates them, and the firewall backend is chosen.
+11. **Services start**: rsyslog, the loops, fail2ban, sshd, then the file browser's sshd and the web UI's helper and servers when they are on.
 
 ## Accounts are reconciled
 
@@ -46,3 +54,5 @@ sshd sends its messages to rsyslog through `/dev/log`. rsyslog writes every mess
 ## The firewall backend
 
 fail2ban bans with iptables. At start the entrypoint creates and deletes a test chain with the nftables-based iptables, and falls back to the legacy one if that fails. Bans apply in the container's own network namespace, never on the host.
+
+The country rules are an nftables table of their own, `inet sftp_countries`, in the same namespace. The root helper loads it in batches: each list of networks goes into sets that no rule reads yet, at most 4,000 elements to a set, and one transaction then points the rules at them and the sets they read before are deleted.

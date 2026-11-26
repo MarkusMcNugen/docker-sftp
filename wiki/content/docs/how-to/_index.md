@@ -11,7 +11,10 @@ Task-oriented recipes. Each page solves one concrete problem and assumes the bas
   {{< card link="add-users/" title="How To Add And Change Users" subtitle="users.conf, SFTP_USERS, a secrets file, and what a restart changes." >}}
   {{< card link="use-hashed-passwords/" title="How To Use Hashed Passwords" subtitle="mkpasswd in the image, the :e marker, and Compose escaping." >}}
   {{< card link="use-public-keys/" title="How To Use Public Keys" subtitle="One or many keys per user, where they are installed, and revoking one." >}}
+  {{< card link="set-account-permissions/" title="How To Set Account Permissions" subtitle="Read-only and upload-only accounts, custom permissions, expiry, allowed networks and a umask." >}}
+  {{< card link="group-accounts/" title="How To Group Accounts" subtitle="Defaults from groups, how they combine, and managers who open other accounts' files." >}}
   {{< card link="share-host-directories/" title="How To Share Host Directories" subtitle="Bind mounts inside a jail, ownership, read-only mounts, and folders shared by several users." >}}
+  {{< card link="apply-changes-live/" title="How To Apply Changes Without A Restart" subtitle="entrypoint apply, settings.conf, and what open sessions keep." >}}
   {{< card link="change-sshd-settings/" title="How To Change sshd Settings" subtitle="Drop-in files, a read-only account, a different port, and the strict crypto policy." >}}
   {{< card link="tune-fail2ban/" title="How To Tune fail2ban" subtitle="Ban times, trusted addresses, unbanning, and your own filters." >}}
   {{< card link="log-transfers/" title="How To Log Transfers" subtitle="A log line for every upload, download, rename and delete." >}}
@@ -21,4 +24,7 @@ Task-oriented recipes. Each page solves one concrete problem and assumes the bas
   {{< card link="upgrade-from-1x/" title="How To Upgrade From 1.x" subtitle="What happens to an existing /config, and what to move by hand." >}}
   {{< card link="build-and-test/" title="How To Build And Test The Image" subtitle="Building locally, the integration suite, and running some scenarios only." >}}
   {{< card link="fix-a-failure/" title="How To Fix A Failure" subtitle="What each failure means, keyed by the message you see." >}}
+  {{< card link="use-the-web-ui/" title="How To Use The Admin Web UI" subtitle="Turning it on, the first admin, roles, a reverse proxy, and lost access." >}}
+  {{< card link="use-the-file-browser/" title="How To Use The File Browser" subtitle="Letting accounts in, what it does, managers, and share links." >}}
+  {{< card link="block-countries/" title="How To Block Countries" subtitle="Block or allow countries, what always passes, and DB-IP or MaxMind data." >}}
 {{< /cards >}}

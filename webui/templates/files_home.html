@@ -1,0 +1,152 @@
+{% extends "files_base.html" %}
+{% block content %}
+<header class="topbar">
+  <button type="button" class="btn btn-ghost btn-icon menu-button" data-open-nav aria-label="Open the menu" data-tip="Open the menu">{{ crate::assets::icon("list")|safe }}</button>
+  <nav class="crumbs-lg" aria-label="Folder">
+    {% if crumbs.is_empty() %}<span class="here">{{ place.top }}</span>{% else %}<a href="./" aria-label="{{ place.top }}" data-tip="{{ place.top }}">{{ crate::assets::icon("house")|safe }}</a>{% for c in crumbs %}<span class="sep">{{ crate::assets::icon("caret-right")|safe }}</span>{% if loop.last %}<span class="here">{{ c.name }}</span>{% else %}<a href="./?path={{ c.path|urlencode }}">{{ c.name }}</a>{% endif %}{% endfor %}{% endif %}
+  </nav>
+  <div class="topbar-actions">
+    <form class="search compact" action="./search" method="get" hx-boost="false" role="search">{{ crate::assets::icon("magnifying-glass")|safe }}<input type="hidden" name="path" value="{{ path }}"><input class="input" type="search" name="q" placeholder="Search names" aria-label="Search file names in {{ here }} and below"></form>
+    <button type="button" class="btn btn-secondary" data-fm-act="mkdir" aria-label="New folder" data-tip="New folder">{{ crate::assets::icon("folder-simple-plus")|safe }}<span class="label">New folder</span></button>
+    <button type="button" class="btn btn-secondary" data-fm-act="upload-folder" aria-label="Upload a folder" data-tip="Upload a folder with everything in it">{{ crate::assets::icon("folder-open")|safe }}<span class="label">Upload folder</span></button>
+    <button type="button" class="btn btn-primary" data-fm-act="upload" aria-label="Upload files" data-tip="Upload files, or drop them on the list">{{ crate::assets::icon("upload-simple")|safe }}<span class="label">Upload</span></button>
+  </div>
+</header>
+<main class="page">
+  {% if !place.own(account) %}<div class="banner">{{ crate::assets::icon("user-switch")|safe }}<span>You are in the files of {{ place.acting }}, with what that account may do. The server logs it under both names.</span></div>{% endif %}
+  {% if !error.is_empty() %}<div class="alert bad" role="alert">{{ crate::assets::icon("warning-circle")|safe }}<div class="alert-body"><span class="alert-text">{{ error }}</span></div><button type="button" class="btn btn-ghost btn-icon btn-sm" data-dismiss aria-label="Dismiss" data-tip="Dismiss">{{ crate::assets::icon("x")|safe }}</button></div>{% endif %}
+  <div class="fm" id="fm" data-fm data-path="{{ path }}" data-here="{{ here }}" data-csrf="{{ l.csrf }}">
+    <nav class="card fm-tree" aria-label="Folders">
+      <ul class="tree" role="tree">
+        {% for t in tree %}<li role="none"><a class="tree-item d{{ t.indent() }}" role="treeitem" href="./?path={{ t.path|urlencode }}" data-dir="{{ t.path }}"{% if t.current %} aria-current="true"{% endif %}{% if t.open %} aria-expanded="true"{% endif %}>{% if t.depth == 0 %}{{ crate::assets::icon("house")|safe }}{% else if t.open %}{{ crate::assets::icon("folder-open")|safe }}{% else %}{{ crate::assets::icon("folder-simple")|safe }}{% endif %}<span>{{ t.name }}</span></a></li>{% endfor %}
+      </ul>
+    </nav>
+    <section class="card drop-host fm-main" aria-label="Files in {{ here }}">
+      <div class="toolbar fm-bar"><span class="muted">{{ count }}</span><div class="segmented" role="group" aria-label="View"><button type="button" data-fmview="list" aria-pressed="true" aria-label="List" data-tip="List">{{ crate::assets::icon("rows")|safe }}</button><button type="button" data-fmview="grid" aria-pressed="false" aria-label="Grid" data-tip="Grid">{{ crate::assets::icon("squares-four")|safe }}</button></div></div>
+      <div class="bulk-bar" data-fm-bulk hidden><span class="count"></span>
+        <button type="button" class="btn btn-ghost btn-sm" data-fm-act="download" data-tip="Download as one zip file">{{ crate::assets::icon("file-zip")|safe }}Download</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-fm-act="move" data-tip="Move to another folder">{{ crate::assets::icon("arrow-bend-up-right")|safe }}Move</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-fm-act="copy" data-tip="Copy into a folder">{{ crate::assets::icon("copy-simple")|safe }}Copy</button>
+        <button type="button" class="btn btn-ghost btn-sm danger" data-fm-act="delete" data-tip="Delete the selected items">{{ crate::assets::icon("trash")|safe }}Delete</button>
+        <button type="button" class="btn btn-ghost btn-icon btn-sm" data-fm-act="clear" aria-label="Clear the selection" data-tip="Clear the selection">{{ crate::assets::icon("x")|safe }}</button>
+      </div>
+      <div class="table-wrap" data-fm-list>
+        <table class="table stack files-table" id="files-table" aria-multiselectable="true">
+          <thead><tr><th class="pick"><input type="checkbox" data-fm-all aria-label="Select everything on this page"></th>{% for c in columns %}<th class="{{ c.class }}"{% if !c.sort.is_empty() %} aria-sort="{{ c.sort }}"{% endif %}><a class="th-link" href="{{ c.href }}">{{ c.label }}</a></th>{% endfor %}<th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
+          <tbody>
+          {% for r in rows %}
+            <tr data-entry data-path="{{ r.path }}" data-name="{{ r.name }}" data-kind="{{ r.kind }}" data-preview="{{ r.preview }}" data-archive="{{ r.archive }}" data-size="{{ r.size }}" draggable="true" aria-selected="false">
+              <td class="pick"><input type="checkbox" aria-label="Select {{ r.name }}"></td>
+              <td class="lead"><div class="file-name"><span class="file-icon {{ r.look.tone }}">{{ crate::assets::icon(r.look.icon)|safe }}</span><a class="name" href="{{ r.href() }}" draggable="false"{% if r.kind != "dir" %} hx-boost="false"{% endif %}{% if r.kind == "file" %} download{% endif %}>{{ r.name }}</a></div></td>
+              <td class="opt-sm num" data-label="Size">{% if r.kind == "dir" %}<span class="muted">Folder</span>{% else %}{{ r.size }}{% endif %}</td>
+              <td data-label="Modified">{% if !r.iso.is_empty() %}<time datetime="{{ r.iso }}">{{ r.modified }}</time>{% endif %}</td>
+              <td class="actions"><button type="button" class="btn btn-ghost btn-icon btn-sm" data-fm-more aria-label="More for {{ r.name }}" data-tip="More">{{ crate::assets::icon("dots-three-vertical")|safe }}</button></td>
+            </tr>
+          {% else %}
+            <tr data-empty><td colspan="5"><div class="empty">{{ crate::assets::icon("cloud-arrow-up")|safe }}<span class="empty-title">This folder is empty</span><span>Drop files here, or use Upload.</span></div></td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="files-grid" data-fm-grid hidden>
+        {% for r in rows %}<div class="tile" data-entry data-path="{{ r.path }}" data-name="{{ r.name }}" data-kind="{{ r.kind }}" data-preview="{{ r.preview }}" data-archive="{{ r.archive }}" data-size="{{ r.size }}" draggable="true" aria-selected="false"><div class="thumb">{% if r.preview == "image" %}<img src="{{ r.preview_href() }}" alt="" loading="lazy" decoding="async" draggable="false">{% else %}<span class="file-icon {{ r.look.tone }}">{{ crate::assets::icon(r.look.icon)|safe }}</span>{% endif %}</div><span class="name">{{ r.name }}</span><span class="sub">{% if r.kind == "dir" %}Folder{% else %}{{ r.size }}{% endif %}</span></div>{% endfor %}
+      </div>
+      <div class="pager"><span class="note">Click to select, double-click to open, right-click for more</span>{% if pages > 1 %}<span class="row-actions"><span class="muted">Page {{ page }} of {{ pages }}</span>{% if prev.is_empty() %}<button type="button" class="btn btn-ghost btn-icon btn-sm" disabled aria-label="Previous page">{{ crate::assets::icon("caret-left")|safe }}</button>{% else %}<a class="btn btn-ghost btn-icon btn-sm" href="{{ prev }}" aria-label="Previous page" data-tip="Previous page">{{ crate::assets::icon("caret-left")|safe }}</a>{% endif %}{% if next.is_empty() %}<button type="button" class="btn btn-ghost btn-icon btn-sm" disabled aria-label="Next page">{{ crate::assets::icon("caret-right")|safe }}</button>{% else %}<a class="btn btn-ghost btn-icon btn-sm" href="{{ next }}" aria-label="Next page" data-tip="Next page">{{ crate::assets::icon("caret-right")|safe }}</a>{% endif %}</span>{% endif %}</div>
+      <div class="dropzone">{{ crate::assets::icon("cloud-arrow-up")|safe }}<span>Drop to upload into {{ here }}</span></div>
+    </section>
+    <aside class="card fm-details" id="details" aria-label="Details" aria-live="polite">{% include "files_details.html" %}</aside>
+  </div>
+
+  <div class="menu ctx" id="fm-ctx" role="menu" hidden>
+    <button type="button" class="menu-item" role="menuitem" data-fm-act="open" data-need="one">{{ crate::assets::icon("folder-open")|safe }}Open<kbd>Enter</kbd></button>
+    <button type="button" class="menu-item" role="menuitem" data-fm-act="preview" data-need="one-preview">{{ crate::assets::icon("eye")|safe }}Preview<kbd>Space</kbd></button>
+    <button type="button" class="menu-item" role="menuitem" data-fm-act="download">{{ crate::assets::icon("download-simple")|safe }}Download</button>
+    {% if share.allowed %}<button type="button" class="menu-item" role="menuitem" data-fm-act="share" data-need="one-file">{{ crate::assets::icon("share-network")|safe }}Share</button>{% endif %}
+    <button type="button" class="menu-item" role="menuitem" data-fm-act="rename" data-need="one">{{ crate::assets::icon("pencil-simple")|safe }}Rename<kbd>F2</kbd></button>
+    <button type="button" class="menu-item" role="menuitem" data-fm-act="move">{{ crate::assets::icon("arrow-bend-up-right")|safe }}Move</button>
+    <button type="button" class="menu-item" role="menuitem" data-fm-act="copy">{{ crate::assets::icon("copy-simple")|safe }}Copy</button>
+    <div class="menu-sep"></div>
+    <button type="button" class="menu-item danger" role="menuitem" data-fm-act="delete">{{ crate::assets::icon("trash")|safe }}Delete<kbd>Del</kbd></button>
+  </div>
+
+  <div class="modal-layer" data-modal="name" hidden>
+    <form class="modal" role="dialog" aria-modal="true" aria-labelledby="fm-name-title" method="post" action="./mkdir">
+      <div class="modal-head"><div class="titles"><span class="title" id="fm-name-title" data-title>New folder</span><span class="sub" data-sub></span></div><button type="button" class="btn btn-ghost btn-icon btn-sm" data-fm-close aria-label="Close" data-tip="Close">{{ crate::assets::icon("x")|safe }}</button></div>
+      <div class="modal-body">
+        <input type="hidden" name="csrf" value="{{ l.csrf }}">
+        <input type="hidden" name="path" value="{{ path }}">
+        <label class="field"><span class="field-label">Name</span><input class="input" name="name" required autocomplete="off" spellcheck="false"></label>
+      </div>
+      <div class="modal-foot"><button type="button" class="btn btn-secondary" data-fm-close>Cancel</button><button type="submit" class="btn btn-primary" data-submit>Make the folder</button></div>
+    </form>
+  </div>
+
+  <div class="modal-layer" data-modal="target" hidden>
+    <form class="modal" role="dialog" aria-modal="true" aria-labelledby="fm-target-title" method="post" action="./move">
+      <div class="modal-head"><div class="titles"><span class="title" id="fm-target-title" data-title>Move</span><span class="sub" data-sub></span></div><button type="button" class="btn btn-ghost btn-icon btn-sm" data-fm-close aria-label="Close" data-tip="Close">{{ crate::assets::icon("x")|safe }}</button></div>
+      <div class="modal-body">
+        <input type="hidden" name="csrf" value="{{ l.csrf }}">
+        <input type="hidden" name="folder" value="{{ path }}">
+        <div data-paths hidden></div>
+        <label class="field"><span class="field-label">Into the folder</span><input class="input mono" name="to" value="{{ path }}" list="fm-folders" required autocomplete="off" spellcheck="false"></label>
+        <datalist id="fm-folders">{% for t in tree %}<option value="{{ t.path }}"></option>{% endfor %}</datalist>
+        <p class="field-hint">A path from the top of your files, such as /reports. A copy whose name is taken there gets "copy" added to its name.</p>
+      </div>
+      <div class="modal-foot"><button type="button" class="btn btn-secondary" data-fm-close>Cancel</button><button type="submit" class="btn btn-primary" data-submit>Move</button></div>
+    </form>
+  </div>
+
+  <div class="modal-layer" data-modal="delete" hidden>
+    <form class="modal" role="dialog" aria-modal="true" aria-labelledby="fm-delete-title" method="post" action="./delete">
+      <div class="modal-head"><div class="titles"><span class="title" id="fm-delete-title" data-title>Delete</span><span class="sub" data-sub></span></div><button type="button" class="btn btn-ghost btn-icon btn-sm" data-fm-close aria-label="Close" data-tip="Close">{{ crate::assets::icon("x")|safe }}</button></div>
+      <div class="modal-body">
+        <input type="hidden" name="csrf" value="{{ l.csrf }}">
+        <input type="hidden" name="folder" value="{{ path }}">
+        <div data-paths hidden></div>
+        <ul class="fm-names" data-names></ul>
+        <div class="alert warn" data-folder-warning>{{ crate::assets::icon("warning-circle")|safe }}<div class="alert-body"><span class="alert-text">A folder is deleted with everything in it.</span></div></div>
+      </div>
+      <div class="modal-foot"><button type="button" class="btn btn-secondary" data-fm-close>Cancel</button><button type="submit" class="btn btn-danger" data-submit>Delete</button></div>
+    </form>
+  </div>
+
+  <div class="modal-layer" data-modal="preview" hidden>
+    <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="fm-preview-title">
+      <div class="modal-head"><div class="titles"><span class="title" id="fm-preview-title" data-title></span><span class="sub" data-sub></span></div><a class="btn btn-ghost btn-icon btn-sm" href="./download" hx-boost="false" download data-preview-download aria-label="Download" data-tip="Download">{{ crate::assets::icon("download-simple")|safe }}</a><button type="button" class="btn btn-ghost btn-icon btn-sm" data-fm-close aria-label="Close the preview" data-tip="Close">{{ crate::assets::icon("x")|safe }}</button></div>
+      <div class="preview" data-preview-body></div>
+      <div class="modal-foot"><span class="note" data-preview-note></span><button type="button" class="btn btn-ghost btn-icon btn-sm" data-preview-step="-1" aria-label="The file before" data-tip="The file before">{{ crate::assets::icon("caret-left")|safe }}</button><button type="button" class="btn btn-ghost btn-icon btn-sm" data-preview-step="1" aria-label="The file after" data-tip="The file after">{{ crate::assets::icon("caret-right")|safe }}</button></div>
+    </div>
+  </div>
+
+  <div class="modal-layer" data-modal="share" hidden>
+    <form class="modal" role="dialog" aria-modal="true" aria-labelledby="fm-share-title" data-share-form hx-boost="false">
+      <div class="modal-head"><span class="file-icon">{{ crate::assets::icon("share-network")|safe }}</span><div class="titles"><span class="title" id="fm-share-title" data-title>Share</span><span class="sub" data-sub></span></div><button type="button" class="btn btn-ghost btn-icon btn-sm" data-fm-close aria-label="Close" data-tip="Close">{{ crate::assets::icon("x")|safe }}</button></div>
+      <div class="modal-body">
+        <input type="hidden" name="path" value="">
+        <div class="fields">
+          <label class="field"><span class="field-label">Lasts</span><select class="select" name="days">{% for o in share.options %}<option value="{{ o.days }}"{% if o.selected %} selected{% endif %}>{{ o.label }}</option>{% endfor %}</select></label>
+          <label class="field"><span class="field-label">Password<span class="help" tabindex="0" role="img" aria-label="Optional; send it by another way than the link" data-tip="Optional; send it by another way than the link">{{ crate::assets::icon("question")|safe }}</span></span><input class="input" type="password" name="password" autocomplete="new-password"{% if share.password_required %} required placeholder="Required here"{% else %} placeholder="None"{% endif %}></label>
+        </div>
+        <div class="alert info" data-share-made hidden>{{ crate::assets::icon("link-simple")|safe }}<div class="alert-body"><span class="alert-title">Link ready; it is shown only now</span><div class="copy-field"><code data-share-link></code><button type="button" class="btn btn-ghost btn-icon btn-sm" data-copy="" data-share-copy aria-label="Copy the share link" data-tip="Copy the link">{{ crate::assets::icon("copy")|safe }}</button></div><span class="field-hint" data-share-ends></span></div></div>
+        <p class="field-hint" data-share-error role="alert"></p>
+      </div>
+      <div class="modal-foot"><button type="button" class="btn btn-secondary" data-fm-close>Close</button><button type="submit" class="btn btn-primary" data-submit>Make the link</button></div>
+    </form>
+  </div>
+
+  <div class="modal-layer" data-modal="archive" hidden>
+    <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="fm-archive-title">
+      <div class="modal-head"><span class="file-icon zip">{{ crate::assets::icon("file-zip")|safe }}</span><div class="titles"><span class="title" id="fm-archive-title" data-title></span><span class="sub" data-sub></span></div><button type="button" class="btn btn-ghost btn-icon btn-sm" data-fm-close aria-label="Close" data-tip="Close">{{ crate::assets::icon("x")|safe }}</button></div>
+      <div data-archive-body></div>
+    </div>
+  </div>
+
+  <div class="uploads" data-fm-uploads hidden>
+    <div class="uploads-head">{{ crate::assets::icon("upload-simple")|safe }}<span data-fm-uploads-title>Uploads</span><button type="button" class="btn btn-ghost btn-icon btn-sm" data-fm-act="hide-uploads" aria-label="Hide the uploads" data-tip="Hide">{{ crate::assets::icon("x")|safe }}</button></div>
+    <div class="fm-upload-rows" data-fm-upload-rows></div>
+  </div>
+  <template id="fm-upload-row"><div class="upload-row"><span class="file-icon">{{ crate::assets::icon("file")|safe }}</span><span class="name"></span><span class="meta-text"></span><progress max="100" value="0"></progress><button type="button" class="btn btn-ghost btn-sm" data-fm-resume hidden>{{ crate::assets::icon("arrow-counter-clockwise")|safe }}Go on</button></div></template>
+  <input type="file" multiple hidden data-fm-pick>
+  <input type="file" multiple hidden webkitdirectory data-fm-pick-folder>
+</main>
+{% endblock %}

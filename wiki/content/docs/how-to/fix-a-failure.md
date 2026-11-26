@@ -22,6 +22,15 @@ The uid and gid fields take numbers. uid and gid 0 are refused because they are 
 **`fatal: SFTP_PORT=70000 is not a port number`**, **`fatal: SFTP_CRYPTO_POLICY=weak must be modern or strict`**, **`fatal: SFTP_AUTH_LOG_MAX_BYTES=10MB is not a byte count (0 means no cap)`**, **`fatal: FAIL2BAN_ENABLED=maybe must be true or false`**
 An environment variable has a value the image does not accept. [Environment Variables](../../reference/environment-variables/) lists the accepted values.
 
+**`fatal: user "eve": unknown option "shell" (see the users.conf reference)`**, **`fatal: user "eve": sharedays=0 is not a number of days from 1 to 999999999`**, **`fatal: user "eve": option noshare is given twice`**
+An option at the end of an account line, or of a group's line, is misspelled, out of range or repeated. [users.conf](../../reference/users-conf/) lists the options and their values.
+
+**`fatal: user "ann": group staff is not in /config/sshd/groups.conf`**
+A `group=` names a group that `groups.conf` does not define ([How To Group Accounts](../group-accounts/)).
+
+**`fatal: WEBUI_FILES_ENABLED needs WEBUI_ENABLED=true: ...`**
+The file browser needs the admin web UI, where admins let accounts in and make their sign-in links.
+
 **`fatal: sshd rejected its configuration: ...`**
 A file in `/config/sshd/sshd_config.d/`, or `/config/sshd/sshd_config`, has a mistake. The rest of the line is sshd's own message, naming the file and line.
 

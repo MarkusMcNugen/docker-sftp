@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block content %}
+<section class="card">
+  <form method="get" action="/audit" class="toolbar">
+    <label class="search">{{ crate::assets::icon("magnifying-glass")|safe }}<input class="input" type="search" name="q" value="{{ q }}" placeholder="Search every entry" aria-label="Search the audit log"></label>
+    <button type="submit" class="btn btn-secondary">{{ crate::assets::icon("magnifying-glass")|safe }}Search</button>
+  </form>
+  <div class="table-wrap"><table class="table stack">
+    <thead><tr>{% call m::sort("When", "") %}{% endcall %}{% call m::sort("Admin", "") %}{% endcall %}<th class="opt-sm">From</th>{% call m::sort("Action", "") %}{% endcall %}{% call m::sort("Target", "") %}{% endcall %}<th class="actions">Result</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr><td class="lead" data-sort="{{ r.time_iso }}"><time datetime="{{ r.time_iso }}">{{ r.time }}</time></td>
+        <td data-label="Admin" data-sort="{{ r.admin }}"><span class="cell-user"><span class="avatar sm {{ crate::pages::tone(r.admin) }}">{{ crate::pages::initials(r.admin) }}</span><span class="name">{{ r.admin }}</span></span></td>
+        <td class="opt-sm" data-label="From"><code>{{ r.address }}</code></td>
+        <td data-label="Action">{{ r.action }}</td>
+        <td data-label="Target"><code>{{ r.target }}</code></td>
+        <td class="actions">{% if r.ok %}<span class="state ok" role="img" aria-label="Succeeded" data-tip="Succeeded">{{ crate::assets::icon("check-circle-fill")|safe }}</span>{% else %}<span class="state bad" role="img" aria-label="Refused: {{ r.outcome }}" data-tip="Refused: {{ r.outcome }}">{{ crate::assets::icon("x-circle-fill")|safe }}</span>{% endif %}</td></tr>
+    {% else %}
+      <tr><td colspan="6"><div class="empty">{{ crate::assets::icon("clipboard-text")|safe }}<span class="empty-title">No entries</span></div></td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <div class="pager"><span class="note">Newest first</span><span class="row-actions">{% if !first %}<a class="btn btn-ghost btn-sm" href="/audit?q={{ q|urlencode }}">{{ crate::assets::icon("caret-left")|safe }}Newest</a>{% endif %}{% if let Some(older) = older %}<a class="btn btn-ghost btn-sm" href="/audit?q={{ q|urlencode }}&amp;before={{ older }}">Older{{ crate::assets::icon("caret-right")|safe }}</a>{% endif %}</span></div>
+</section>
+{% endblock %}

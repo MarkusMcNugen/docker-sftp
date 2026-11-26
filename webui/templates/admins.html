@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% import "macros.html" as m %}
+{% block content %}
+<section class="card">
+  <div class="table-wrap"><table class="table stack" id="admins-table">
+    <thead><tr>{% call m::sort("Admin", "") %}{% endcall %}{% call m::sort("Role", "") %}{% endcall %}{% call m::sort("Two-factor", "") %}{% endcall %}{% call m::sort_in("Last sign-in", "number", "opt-sm") %}{% endcall %}<th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
+    <tbody>
+    {% for a in admins %}
+      <tr>
+        <td class="lead" data-sort="{{ a.name }}"><div class="cell-user"><span class="avatar sm {{ crate::pages::tone(a.name) }}">{{ crate::pages::initials(a.name) }}</span><span class="name">{{ a.name }}</span>{% if a.me %}<span class="pill accent">You</span>{% endif %}{% if a.from_file %}<span class="meta-icons"><span role="img" aria-label="From WEBUI_ADMIN_FILE; change it there" data-tip="From WEBUI_ADMIN_FILE; change it there">{{ crate::assets::icon("lock-simple")|safe }}</span></span>{% endif %}</div></td>
+        <td data-label="Role" data-sort="{{ a.role_label }}">{{ a.role_label }}</td>
+        <td data-label="Two-factor" data-sort="{% if a.totp %}on{% else %}off{% endif %}">{% if a.totp %}<span class="state ok" role="img" aria-label="Two-factor sign-in is on" data-tip="Two-factor sign-in is on">{{ crate::assets::icon("check-circle-fill")|safe }}</span>{% else %}<span class="state warn" role="img" aria-label="Two-factor sign-in is off" data-tip="Two-factor sign-in is off">{{ crate::assets::icon("warning-circle-fill")|safe }}</span>{% endif %}</td>
+        <td class="opt-sm" data-label="Last sign-in" data-sort="{{ a.last_sort }}">{% if a.last_iso.is_empty() %}<span class="muted">{{ a.last_login }}</span>{% else %}<time datetime="{{ a.last_iso }}" data-tip-prefix="Signed in ">{{ a.last_login }}</time>{% endif %}</td>
+        <td class="actions">{% if l.full %}<span class="row-actions">
+          {% if !a.from_file %}<button type="button" class="btn btn-ghost btn-icon btn-sm" popovertarget="role-{{ a.name }}" aria-label="Change the role of {{ a.name }}" data-tip="Change the role">{{ crate::assets::icon("user-switch")|safe }}</button>
+          <div class="pop" id="role-{{ a.name }}" popover><form method="post" action="/admins/{{ a.name }}/role">
+            <div class="modal-head"><div class="titles"><span class="title">Change the role of {{ a.name }}</span></div><button type="button" class="btn btn-ghost btn-icon btn-sm" popovertarget="role-{{ a.name }}" popovertargetaction="hide" aria-label="Close">{{ crate::assets::icon("x")|safe }}</button></div>
+            <div class="modal-body"><input type="hidden" name="csrf" value="{{ l.csrf }}"><label class="field"><span class="field-label">Role</span><select class="select" name="role"><option value="full"{% if a.role == "full" %} selected{% endif %}>Full access</option><option value="read-only"{% if a.role == "read-only" %} selected{% endif %}>Read-only</option></select></label></div>
+            <div class="modal-foot"><button type="submit" class="btn btn-primary">{{ crate::assets::icon("check")|safe }}Change role</button></div>
+          </form></div>{% endif %}
+          {% if a.totp && !a.me %}<form method="post" action="/admins/{{ a.name }}/totp-reset" hx-confirm="Turn off two-factor sign-in for {{ a.name }}? They can set it up again."><input type="hidden" name="csrf" value="{{ l.csrf }}"><button type="submit" class="btn btn-ghost btn-icon btn-sm" aria-label="Turn off two-factor sign-in for {{ a.name }}" data-tip="Turn off two-factor sign-in">{{ crate::assets::icon("device-mobile")|safe }}</button></form>{% endif %}
+          {% if !a.from_file %}<form method="post" action="/admins/{{ a.name }}/delete" hx-confirm="Remove the admin {{ a.name }}?"><input type="hidden" name="csrf" value="{{ l.csrf }}"><button type="submit" class="btn btn-ghost btn-icon btn-sm danger" aria-label="Remove {{ a.name }}" data-tip="Remove {{ a.name }}">{{ crate::assets::icon("trash")|safe }}</button></form>{% endif %}
+        </span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% if l.full %}
+<section class="card">
+  <header class="card-head"><h2 class="card-title">{{ crate::assets::icon("user-plus")|safe }}<span>Invite an admin</span></h2><span class="card-actions">{% call m::help("The link works once, for 24 hours; the new admin sets a password and can turn on two-factor") %}{% endcall %}</span></header>
+  <form method="post" action="/admins/invite" class="card-body form-row">
+    <input type="hidden" name="csrf" value="{{ l.csrf }}">
+    <label class="field"><span class="field-label">Name</span><input class="input" name="name" placeholder="carlos" required pattern="[A-Za-z0-9._][A-Za-z0-9._\-]{0,31}" autocomplete="off"></label>
+    <label class="field"><span class="field-label">Role</span><select class="select" name="role"><option value="full">Full access</option><option value="read-only" selected>Read-only</option></select></label>
+    <button type="submit" class="btn btn-primary">{{ crate::assets::icon("link-simple")|safe }}Create invite link</button>
+  </form>
+</section>
+{% if !invites.is_empty() %}
+<section class="card">
+  <header class="card-head"><h2 class="card-title">{{ crate::assets::icon("link-simple")|safe }}<span>Invites not used yet</span></h2></header>
+  <div class="table-wrap"><table class="table stack" id="invites-table">
+    <thead><tr>{% call m::sort("Name", "") %}{% endcall %}{% call m::sort("Role", "") %}{% endcall %}{% call m::sort("Expires", "") %}{% endcall %}{% call m::sort_in("Invited by", "", "opt-sm") %}{% endcall %}<th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
+    <tbody>
+    {% for i in invites %}
+      <tr><td class="lead" data-sort="{{ i.name }}"><span class="name">{{ i.name }}</span></td>
+        <td data-label="Role">{{ i.role_label }}</td>
+        <td data-label="Expires" data-sort="{{ i.expires_iso }}"><span class="pill">{{ crate::assets::icon("hourglass-medium")|safe }}<time datetime="{{ i.expires_iso }}" data-tip-prefix="Expires ">{{ i.expires }}</time></span></td>
+        <td class="opt-sm" data-label="Invited by">{{ i.created_by }}</td>
+        <td class="actions"><form method="post" action="/admins/invites/revoke" hx-confirm="Withdraw the invite for {{ i.name }}?"><input type="hidden" name="csrf" value="{{ l.csrf }}"><input type="hidden" name="name" value="{{ i.name }}"><button type="submit" class="btn btn-ghost btn-icon btn-sm danger" aria-label="Withdraw the invite for {{ i.name }}" data-tip="Withdraw the invite">{{ crate::assets::icon("x-circle")|safe }}</button></form></td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endif %}
+{% endif %}
+{% endblock %}

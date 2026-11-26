@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block bare %}
+<div class="auth-card">
+  <div class="auth-brand">{{ crate::assets::BRAND|safe }}<span>sftp</span><span class="brand-tag">Files</span></div>
+  {% if !error.is_empty() %}<div class="alert bad" role="alert">{{ crate::assets::icon("warning-circle")|safe }}<div class="alert-body"><span class="alert-text">{{ error }}</span></div></div>{% endif %}
+  {% if !notice.is_empty() %}<div class="alert ok" role="status">{{ crate::assets::icon("check-circle")|safe }}<div class="alert-body"><span class="alert-text">{{ notice }}</span></div></div>{% endif %}
+  {% if mode == "login" %}
+  <div class="auth-head"><h1 class="auth-title">Sign in to your files</h1></div>
+  <form method="post" action="/login" class="auth-form">
+    <input type="hidden" name="login_token" value="{{ login_token }}">
+    <label class="field"><span class="field-label">Account</span><input class="input" name="name" value="{{ name }}" autocomplete="username" required autofocus></label>
+    <label class="field"><span class="field-label">Password</span><span class="input-wrap"><input class="input" type="password" name="password" autocomplete="current-password" required><button type="button" class="btn btn-ghost btn-icon btn-sm" data-reveal aria-pressed="false" aria-label="Show the password" data-tip="Show the password"><span class="show-off">{{ crate::assets::icon("eye")|safe }}</span><span class="show-on">{{ crate::assets::icon("eye-slash")|safe }}</span></button></span></label>
+    <label class="field"><span class="field-label">Code<span class="help" tabindex="0" role="img" aria-label="The six digits your authenticator app shows" data-tip="The six digits your authenticator app shows">{{ crate::assets::icon("question")|safe }}</span></span><input class="input mono" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="123456"></label>
+    <button type="submit" class="btn btn-primary btn-block">{{ crate::assets::icon("sign-in")|safe }}Sign in</button>
+  </form>
+  {% else if mode == "invite" %}
+  <div class="auth-head"><h1 class="auth-title">Welcome, {{ name }}</h1><p class="auth-sub">Choose a password for the file browser, then scan the code with an authenticator app and enter the six digits it shows.</p></div>
+  <form method="post" action="/invite" class="auth-form">
+    <input type="hidden" name="login_token" value="{{ login_token }}">
+    <input type="hidden" name="token" value="{{ token }}">
+    <input type="hidden" name="name" value="{{ name }}">
+    <input type="hidden" name="secret" value="{{ secret }}">
+    <input type="hidden" name="username" value="{{ name }}" autocomplete="username">
+    <label class="field"><span class="field-label">Password<span class="help" tabindex="0" role="img" aria-label="At least {{ min_password }} characters" data-tip="At least {{ min_password }} characters">{{ crate::assets::icon("question")|safe }}</span></span><input class="input" type="password" name="password" autocomplete="new-password" minlength="{{ min_password }}" required></label>
+    <label class="field"><span class="field-label">Password again</span><input class="input" type="password" name="confirm" autocomplete="new-password" minlength="{{ min_password }}" required></label>
+    <div class="setup-2fa"><div class="qr">{{ qr|safe }}</div><div class="vstack">
+      <span class="field-hint">Or type this key into the app</span>
+      <div class="copy-field"><code>{{ secret }}</code><button type="button" class="btn btn-ghost btn-icon btn-sm" data-copy="{{ secret }}" aria-label="Copy the key to type it in instead" data-tip="Copy the key">{{ crate::assets::icon("copy")|safe }}</button></div>
+    </div></div>
+    <label class="field"><span class="field-label">Code from the app</span><input class="input mono" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="123456" required></label>
+    <button type="submit" class="btn btn-primary btn-block">{{ crate::assets::icon("check-circle")|safe }}Set up sign-in</button>
+  </form>
+  {% else if mode == "invalid" %}
+  <span class="auth-state">{{ crate::assets::icon("link-break")|safe }}</span>
+  <div class="auth-head"><h1 class="auth-title">This link no longer works</h1><p class="auth-sub">It was used, it expired or it was mistyped. Ask an admin for a new sign-in link.</p></div>
+  <a class="btn btn-secondary btn-block" href="/login">{{ crate::assets::icon("sign-in")|safe }}Sign in</a>
+  {% endif %}
+</div>
+{% endblock %}

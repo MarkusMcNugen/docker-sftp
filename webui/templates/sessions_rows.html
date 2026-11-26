@@ -1,0 +1,10 @@
+{% for row in sessions %}
+<tr>
+  <td class="lead" data-sort="{{ row.account }}"><div class="cell-user"><span class="avatar sm {{ crate::pages::tone(row.account) }}">{{ crate::pages::initials(row.account) }}</span><a class="name" href="/accounts/{{ row.account }}">{{ row.account }}</a></div></td>
+  <td data-label="From"><code>{{ row.address }}</code></td>
+  <td data-label="Connected" data-sort="{{ row.since_iso }}"><time datetime="{{ row.since_iso }}">{{ row.since }}</time></td>
+  <td class="actions">{% if l.full %}<form method="post" action="/sessions/end" hx-confirm="Disconnect {{ row.account }} from {{ row.address }}?"><input type="hidden" name="csrf" value="{{ l.csrf }}"><input type="hidden" name="pid" value="{{ row.pid }}"><input type="hidden" name="back" value="/"><button type="submit" class="btn btn-ghost btn-icon btn-sm danger" aria-label="Disconnect {{ row.account }} from {{ row.address }}" data-tip="Disconnect {{ row.account }}">{{ crate::assets::icon("power")|safe }}</button></form>{% endif %}</td>
+</tr>
+{% else %}
+<tr><td colspan="4"><div class="empty">{{ crate::assets::icon("plugs-connected")|safe }}<span class="empty-title">No one is connected</span></div></td></tr>
+{% endfor %}

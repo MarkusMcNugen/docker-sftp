@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block actions %}<form method="get" action="/" class="segmented text" role="group" aria-label="Time range for the charts">{% for r in ranges %}<button type="submit" name="range" value="{{ r.value }}" aria-pressed="{% if r.on %}true{% else %}false{% endif %}">{{ r.label }}</button>{% endfor %}</form>{% endblock %}
+{% block content %}
+<div class="stats">
+  <a class="stat" href="/accounts"><div class="stat-head"><span>Accounts</span>{{ crate::assets::icon("users")|safe }}</div><div class="stat-value">{{ s.accounts }}</div><div class="stat-foot">{% if s.disabled > 0 %}<span class="stat-note warn">{{ s.disabled }} disabled or expired</span>{% else %}<span class="stat-note">All active</span>{% endif %}</div></a>
+  <div class="stat"><div class="stat-head"><span>Connected now</span>{{ crate::assets::icon("plugs-connected")|safe }}</div><div class="stat-value">{{ sessions.len() }}</div><div class="stat-foot"><span class="stat-note">{% if sessions.len() == 1 %}1 session{% else %}{{ sessions.len() }} sessions{% endif %}</span></div></div>
+  <a class="stat" href="/bans"><div class="stat-head"><span>Banned addresses</span>{{ crate::assets::icon("prohibit")|safe }}</div><div class="stat-value">{{ s.banned }}</div><div class="stat-foot"><span class="stat-note">From failed logins</span></div></a>
+  <div class="stat"><div class="stat-head"><span>Uptime</span>{{ crate::assets::icon("clock-counter-clockwise")|safe }}</div><div class="stat-value">{{ uptime }}</div><div class="stat-foot"><span class="stat-note">Version {{ s.version }}</span></div></div>
+</div>
+{% if let Some(e) = history_error %}<div class="alert warn">{{ crate::assets::icon("warning-circle-fill")|safe }}<div class="alert-body"><span class="alert-title">History is unavailable</span><span class="alert-text">{{ e }}</span></div></div>{% endif %}
+{% if !charts.is_empty() %}<div class="grid">{% for c in charts %}
+{% include "chart_card.html" %}{% endfor %}
+</div>{% endif %}
+<div class="dash">
+  <section class="card span-2">
+    <header class="card-head"><h2 class="card-title">{{ crate::assets::icon("plugs-connected")|safe }}<span>Connected now</span></h2><span class="card-actions"><span class="help" tabindex="0" role="img" aria-label="Updates every 10 seconds" data-tip="Updates every 10 seconds">{{ crate::assets::icon("question")|safe }}</span></span></header>
+    <div class="table-wrap"><table class="table stack">
+      <thead><tr><th class="sortable"><button type="button" class="th-sort">Account<span class="s-none">{{ crate::assets::icon("arrows-down-up")|safe }}</span><span class="s-asc">{{ crate::assets::icon("arrow-up")|safe }}</span><span class="s-desc">{{ crate::assets::icon("arrow-down")|safe }}</span></button></th><th class="sortable"><button type="button" class="th-sort">From<span class="s-none">{{ crate::assets::icon("arrows-down-up")|safe }}</span><span class="s-asc">{{ crate::assets::icon("arrow-up")|safe }}</span><span class="s-desc">{{ crate::assets::icon("arrow-down")|safe }}</span></button></th><th class="sortable" data-type="number"><button type="button" class="th-sort">Connected<span class="s-none">{{ crate::assets::icon("arrows-down-up")|safe }}</span><span class="s-asc">{{ crate::assets::icon("arrow-up")|safe }}</span><span class="s-desc">{{ crate::assets::icon("arrow-down")|safe }}</span></button></th><th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
+      <tbody id="poll-sessions" hx-get="/sessions" hx-trigger="every 10s" hx-swap="innerHTML">{% include "sessions_rows.html" %}</tbody>
+    </table></div>
+  </section>
+  <section class="card">
+    <header class="card-head"><h2 class="card-title">{{ crate::assets::icon("cube")|safe }}<span>Services</span></h2></header>
+    <ul class="list">
+    {% for svc in s.services %}
+      <li class="list-row"><div class="list-main"><span class="list-title">{{ svc.name }}</span>{% if !svc.detail.is_empty() %}<span class="list-sub">{{ svc.detail }}</span>{% endif %}</div>{% if svc.running %}<span class="state ok" role="img" aria-label="{{ svc.name }} is running" data-tip="{{ svc.name }} is running">{{ crate::assets::icon("check-circle-fill")|safe }}</span>{% else %}<span class="state bad" role="img" aria-label="{{ svc.name }} is stopped" data-tip="{{ svc.name }} is stopped">{{ crate::assets::icon("x-circle-fill")|safe }}</span>{% endif %}</li>
+    {% endfor %}
+      <li class="list-row"><div class="list-main"><span class="list-title">Transfer log</span>{% if !s.transfer_logging %}<span class="list-sub">Turn it on in <a class="link" href="/settings">Settings</a></span>{% endif %}</div>{% if s.transfer_logging %}<span class="state ok" role="img" aria-label="Every file operation is logged" data-tip="Every file operation is logged">{{ crate::assets::icon("check-circle-fill")|safe }}</span>{% else %}<span class="state off" role="img" aria-label="The transfer log is off, so file operations are not logged" data-tip="The transfer log is off, so file operations are not logged">{{ crate::assets::icon("minus-circle-fill")|safe }}</span>{% endif %}</li>
+    </ul>
+  </section>
+  <section class="card span-2">
+    <header class="card-head"><h2 class="card-title">{{ crate::assets::icon("fingerprint")|safe }}<span>Server fingerprints</span></h2><span class="card-actions"><span class="help" tabindex="0" role="img" aria-label="People connecting for the first time can check that their app shows one of these" data-tip="People connecting for the first time can check that their app shows one of these">{{ crate::assets::icon("question")|safe }}</span></span></header>
+    {% for k in s.host_keys %}
+    <div class="fp-row"><span class="pill mono">{{ k.kind }} {{ k.bits }}</span><code class="fp">{{ k.fingerprint }}</code><button type="button" class="btn btn-ghost btn-icon btn-sm" data-copy="{{ k.fingerprint }}" aria-label="Copy the {{ k.kind }} fingerprint" data-tip="Copy the {{ k.kind }} fingerprint">{{ crate::assets::icon("copy")|safe }}</button></div>
+    {% endfor %}
+  </section>
+</div>
+{% endblock %}

@@ -23,11 +23,13 @@ ENGINE=${ENGINE:-$(command -v docker || command -v podman)}
 IMAGE=${1:-}
 RUN_ID=sftp-test-$$
 NET=$RUN_ID-net
+# TEST-NET-2, which belongs to no country and to no private range.
+FARNET=$RUN_ID-farnet
 CLIENT=$RUN_ID-client
 ATTACKER=$RUN_ID-attacker
 WORK=$(mktemp -d)
 FIXTURES=$PWD/tests/fixtures
-ALL_SCENARIOS=(main crash hardened port options rotation rsync legacy reject)
+ALL_SCENARIOS=(main crash hardened port options rotation rsync perms groups countries browser apply webui legacy reject)
 PASSED=0
 FAILED=0
 SKIPPED=0
@@ -53,7 +55,8 @@ fail() {
     FAILED=$((FAILED + 1))
     FAILURES+=("$1")
     printf 'not ok  %s\n' "$1"
-    if [[ -n ${2:-} ]]; then printf '%s\n' "$2" | sed 's/^/        | /' | head -20; fi
+    # The end of the output, where an error says what failed.
+    if [[ -n ${2:-} ]]; then printf '%s\n' "$2" | sed 's/^/        | /' | tail -20; fi
 }
 
 skip() {
@@ -81,6 +84,7 @@ cleanup() {
     mapfile -t ids < <(engine ps -aq --filter "name=$RUN_ID")
     ((${#ids[@]})) && engine rm -f "${ids[@]}" >/dev/null 2>&1
     engine network rm "$NET" >/dev/null 2>&1
+    engine network rm "$FARNET" >/dev/null 2>&1
     # Containers write into $WORK as their root user, which on Docker is the
     # host's root, so the tree is emptied from inside a container.
     engine run --rm -v "$WORK:/w" "$IMAGE" find /w -mindepth 1 -delete >/dev/null 2>&1
@@ -179,6 +183,20 @@ negotiate() {
 
 in_server() { engine exec "$SERVER" "$@"; }
 
+# The server's process titles, one per line. The image has no ps.
+process_titles() {
+    in_server sh -c 'for p in /proc/[0-9]*; do tr "\0" " " <"$p/cmdline" 2>/dev/null; echo; done'
+}
+
+# has_session <account>: true while the account has an open SSH session.
+# The titles are read in full before grep: under pipefail, grep -q leaving
+# early would fail the pipeline when the exec writing into it gets SIGPIPE.
+has_session() {
+    local titles
+    titles=$(process_titles) || return 1
+    grep -q "^sshd-session: $1 \[priv\]" <<<"$titles"
+}
+
 # True when a host profile attached itself to rsyslogd: its security label
 # differs from process 1's. Under Docker every process shares one label.
 rsyslog_confined_by_host() {
@@ -218,6 +236,8 @@ scenario_main() {
     expect "custom .sh script runs without the executable bit" in_server test -e /run/sftp/custom-script-ran
     capture stat -c %a "$main/sshd/keys/ssh_host_ed25519_key"
     expect "generated host key is mode 600" [ "$OUT" = 600 ]
+    capture in_server stat -c '%a %n' /etc/ssh /etc/fail2ban /etc/fail2ban/jail.d /usr/local/bin /usr/local/libexec/sftp
+    expect "the image's own directories are mode 755, whatever the build context's modes" eval '! grep -qv "^755 " <<<"$OUT"'
     capture in_server /usr/sbin/sshd -T
     expect "sshd_config.d drop-in is applied" has "persourcepenaltyexemptlist $CLIENT_IP"
 
@@ -495,6 +515,352 @@ scenario_rsync() {
 }
 
 # ---------------------------------------------------------------------------
+# Per-account permissions and controls from the options on account lines.
+# ---------------------------------------------------------------------------
+scenario_perms() {
+    SERVER=$RUN_ID-perms
+    local cfg=$WORK/perms/config
+    mkdir -p "$cfg/sshd/sshd_config.d"
+    # Refused logins add up to an sshd penalty against the source address;
+    # the client is exempt so later checks still connect.
+    printf 'PerSourcePenaltyExemptList %s\n' "$CLIENT_IP" >"$cfg/sshd/sshd_config.d/10-test.conf"
+    printf '%s\n' "rob:rob-pw:1201:100:pub:readonly" "ula:ula-pw:1202:100:drop:uploadonly" \
+        "cara:cara-pw:1203:100:files:perms=list+download+upload+mkdir" "dina:dina-pw:1204:100:up:disabled" \
+        "exa:exa-pw:1205:100:up:expires=2000-01-01" "fio:fio-pw:1206:100:up:from=192.0.2.0/24" \
+        "gus:gus-pw:1207:100:up:umask=077" "rro:rro-pw:1208:100:pub:rsync,readonly" >"$cfg/sshd/users.conf"
+    start_server "$SERVER" "$cfg" || die "perms server did not start"
+    if ! wait_healthy "$SERVER"; then
+        fail "perms server becomes healthy" "$(server_log_tail)"
+        return
+    fi
+    trust_host "$SERVER" "$cfg"
+    in_server sh -c 'for u in rob ula cara rro; do d=$(ls /home/$u | grep -v -e bin -e lib -e usr | head -1); echo seed >/home/$u/$d/seed.txt; chown $u /home/$u/$d/seed.txt; done'
+    engine exec "$CLIENT" sh -c 'cp /client/hello.txt /tmp/open.txt && chmod 666 /tmp/open.txt'
+
+    capture sftp_password "$CLIENT" rob rob-pw $'get pub/seed.txt /tmp/rob-seed\nput /client/hello.txt pub/new.txt'
+    expect "a read-only account downloads but cannot upload" \
+        eval 'engine exec "$CLIENT" test -s /tmp/rob-seed && ! in_server test -e /home/rob/pub/new.txt'
+    capture sftp_password "$CLIENT" ula ula-pw $'put /client/hello.txt drop/in.txt\nget drop/seed.txt /tmp/ula-seed\nrm drop/seed.txt'
+    expect "an upload-only account uploads but cannot download or delete" \
+        eval 'in_server test -s /home/ula/drop/in.txt && ! engine exec "$CLIENT" test -s /tmp/ula-seed && in_server test -e /home/ula/drop/seed.txt'
+    capture sftp_password "$CLIENT" cara cara-pw $'put /client/hello.txt files/up.txt\nrm files/seed.txt\nrename files/up.txt files/moved.txt'
+    expect "a custom set without delete and rename refuses both" \
+        eval 'in_server test -e /home/cara/files/seed.txt && in_server test -e /home/cara/files/up.txt && ! in_server test -e /home/cara/files/moved.txt'
+    capture sftp_password "$CLIENT" dina dina-pw "pwd"
+    expect "a disabled account cannot log in" eval '((RC != 0)) && has "Permission denied"'
+    capture sftp_password "$CLIENT" exa exa-pw "pwd"
+    expect "an expired account cannot log in" eval '((RC != 0)) && has "Permission denied"'
+    capture sftp_password "$CLIENT" fio fio-pw "pwd"
+    expect "an account limited to other networks is refused" eval '((RC != 0)) && lacks "Remote working directory"'
+    capture sftp_password "$CLIENT" gus gus-pw "put /tmp/open.txt up/open.txt"
+    capture in_server stat -c %a /home/gus/up/open.txt
+    expect "a per-account umask applies (666 becomes 600)" [ "$OUT" = 600 ]
+
+    capture rsync_password "$CLIENT" rro rro-pw "$SERVER_IP:pub/seed.txt" /tmp/rro-seed
+    expect "a read-only rsync account pulls" engine exec "$CLIENT" test -s /tmp/rro-seed
+    capture rsync_password "$CLIENT" rro rro-pw /client/hello.txt "$SERVER_IP:pub/"
+    expect "a read-only rsync account cannot push" eval '((RC != 0)) && has "read-only" && ! in_server test -e /home/rro/pub/hello.txt'
+    capture rsync_password "$CLIENT" rro rro-pw --remove-source-files "$SERVER_IP:pub/seed.txt" /tmp/rro-again
+    expect "a read-only rsync account cannot remove what it pulls" eval '((RC != 0)) && in_server test -e /home/rro/pub/seed.txt'
+}
+
+# ---------------------------------------------------------------------------
+# Groups in groups.conf: members take what their own line leaves unset.
+# ---------------------------------------------------------------------------
+scenario_groups() {
+    SERVER=$RUN_ID-groups
+    local cfg=$WORK/groups/config
+    mkdir -p "$cfg/sshd/sshd_config.d"
+    # Refused logins add up to an sshd penalty against the source address;
+    # the client is exempt so later checks still connect.
+    printf 'PerSourcePenaltyExemptList %s\n' "$CLIENT_IP" >"$cfg/sshd/sshd_config.d/10-test.conf"
+    printf '%s\n' "readers:2300:readonly,umask=077" "off::disabled" "partners:2301:uploadonly" "webbers::web" \
+        "sharers::sharedays=5,sharepassword" "closed::noshare,sharedays=9" >"$cfg/sshd/groups.conf"
+    printf '%s\n' "gra:gra-pw:1301::pub:group=readers" "grb:grb-pw:1302::pub:full,group=readers" \
+        "grc:grc-pw:1303::up:group=off" "grd:grd-pw:1304::drop:group=partners,group=readers" \
+        "gre:gre-pw:1305::up:group=webbers" "grf:grf-pw:1306::up:sharedays=7,group=sharers,group=closed" \
+        >"$cfg/sshd/users.conf"
+    start_server "$SERVER" "$cfg" || die "groups server did not start"
+    if ! wait_healthy "$SERVER"; then
+        fail "groups server becomes healthy" "$(server_log_tail)"
+        return
+    fi
+    trust_host "$SERVER" "$cfg"
+    in_server sh -c 'echo seed >/home/gra/pub/seed.txt && chown gra /home/gra/pub/seed.txt && echo seed >/home/grd/drop/seed.txt && chown grd /home/grd/drop/seed.txt'
+
+    capture sftp_password "$CLIENT" gra gra-pw $'get pub/seed.txt /tmp/gra-seed\nput /client/hello.txt pub/new.txt'
+    expect "a group's read-only permissions bind its member" \
+        eval 'engine exec "$CLIENT" test -s /tmp/gra-seed && ! in_server test -e /home/gra/pub/new.txt'
+    capture sftp_password "$CLIENT" grb grb-pw "put /client/hello.txt pub/new.txt"
+    expect "a member's own permissions win over its group's" in_server test -s /home/grb/pub/new.txt
+    capture in_server stat -c '%a %g' /home/grb/pub/new.txt
+    expect "a member takes its group's umask and gid (600, group 2300)" [ "$OUT" = "600 2300" ]
+    capture sftp_password "$CLIENT" grc grc-pw "pwd"
+    expect "a disabled group refuses its members' logins" eval '((RC != 0)) && has "Permission denied"'
+    capture in_server id -g grd
+    expect "the first listed group with a gid gives a member its primary group" [ "$OUT" = 2301 ]
+    capture sftp_password "$CLIENT" grd grd-pw $'put /client/hello.txt drop/in.txt\nget drop/seed.txt /tmp/grd-seed'
+    expect "permissions from two groups add up (upload-only and read-only)" \
+        eval 'in_server test -s /home/grd/drop/in.txt && engine exec "$CLIENT" test -s /tmp/grd-seed'
+    capture in_server grep '^gre	' /run/sftp/accounts
+    expect "file browser access comes from a group" has $'\tweb,group=webbers\t'
+    capture in_server grep '^grf	' /run/sftp/accounts
+    expect "every share link limit applies, the shortest length among them" \
+        has $'\tnoshare,sharedays=5,sharepassword,group=sharers,group=closed\t'
+}
+
+# ---------------------------------------------------------------------------
+# Country rules: the table they load, a source in no listed country let in
+# by block and dropped by allow, the never-ban list as an exemption, a bad
+# code refused, and the table removed when the rule is off. The far client
+# sits on $FARNET; the usual client's private address always passes.
+# ---------------------------------------------------------------------------
+scenario_countries() {
+    SERVER=$RUN_ID-countries
+    local cfg=$WORK/countries/config far=$RUN_ID-far near_ip key
+    local far_ip=198.51.100.20 server_far_ip=198.51.100.10
+    mkdir -p "$cfg/sshd" "$cfg/fail2ban/jail.d"
+    printf '%s\n' "cora:cora-pw:1301::up" >"$cfg/sshd/users.conf"
+    printf '%s\n' "SFTP_COUNTRY_RULE=block" "SFTP_COUNTRIES=CN, ru" >"$cfg/sshd/settings.conf"
+    # As the web UI writes it, plus a host name only a hand edit could add.
+    printf '[DEFAULT]\nignoreip = 127.0.0.1/8 ::1 192.0.2.0/24 gateway.example\n' >"$cfg/fail2ban/jail.d/00-webui.local"
+    start_server "$SERVER" "$cfg" || die "countries server did not start"
+    if ! wait_healthy "$SERVER"; then
+        fail "countries server becomes healthy" "$(server_log_tail)"
+        return
+    fi
+    trust_host "$SERVER" "$cfg"
+    near_ip=$SERVER_IP
+    capture engine logs "$SERVER"
+    expect "a never-ban host name is reported and the server still starts" \
+        has "cannot exempt a never-ban entry: gateway.example"
+    capture in_server cat /run/sftp/country-rules
+    expect "the country rules are enforced and recorded" eval 'has "enforced=yes" && has "countries=CN RU"'
+    capture in_server nft list set inet sftp_countries a_ports
+    expect "the rules guard sshd's port" has "elements = { 22 }"
+    capture in_server nft list set inet sftp_countries a_exempt4
+    expect "the never-ban networks pass, read as fail2ban reads them" eval 'has "192.0.2.0/24" && has "127.0.0.0/8"'
+    capture in_server nft list set inet sftp_countries a_listed4_0
+    expect "the listed countries' networks are loaded" has "elements = {"
+
+    engine network create --subnet 198.51.100.0/24 "$FARNET" >/dev/null || die "cannot create network $FARNET"
+    engine network connect --ip "$server_far_ip" "$FARNET" "$SERVER" || die "cannot attach $SERVER to $FARNET"
+    engine run -d --name "$far" --network "$FARNET" --ip "$far_ip" -v "$WORK/client:/client:ro" "$IMAGE" \
+        sleep infinity >/dev/null || die "cannot start the far client"
+    key=$(cat "$cfg/sshd/keys/ssh_host_ed25519_key.pub") || die "no host key in $cfg"
+    printf '%s %s\n' "$server_far_ip" "$key" >>"$WORK/client/known_hosts"
+    SERVER_IP=$server_far_ip
+    capture sftp_password "$far" cora cora-pw "pwd"
+    expect "block lets in a source in no listed country" eval '((RC == 0))'
+
+    printf '%s\n' "SFTP_COUNTRY_RULE=allow" "SFTP_COUNTRIES=IS" >"$cfg/sshd/settings.conf"
+    capture in_server entrypoint apply
+    expect "apply loads allow mode" eval '((RC == 0)) && has "country rules: allow IS on port(s) 22"'
+    capture in_server nft list chain inet sftp_countries input
+    expect "a reload points the rules at the sets it filled" \
+        eval 'has "ip saddr @b_listed4_0 accept" && has "tcp dport @b_ports drop" && lacks "@a_"'
+    capture in_server nft -t list table inet sftp_countries
+    expect "a reload deletes the sets the rules read before" eval '((RC == 0)) && has "set b_ports" && lacks "set a_"'
+    capture sftp_password "$far" cora cora-pw "pwd"
+    expect "allow drops a source in no listed country" eval '((RC != 0)) && has "timed out"'
+    SERVER_IP=$near_ip
+    capture sftp_password "$CLIENT" cora cora-pw "pwd"
+    expect "a private address passes allow" eval '((RC == 0))'
+
+    printf '[DEFAULT]\nignoreip = 127.0.0.1/8 ::1 198.51.100.0/24\n' >"$cfg/fail2ban/jail.d/00-webui.local"
+    capture in_server entrypoint apply
+    SERVER_IP=$server_far_ip
+    capture sftp_password "$far" cora cora-pw "pwd"
+    expect "a never-ban network passes allow" eval '((RC == 0))'
+
+    printf '%s\n' "SFTP_COUNTRY_RULE=block" "SFTP_COUNTRIES=CN CHN" >"$cfg/sshd/settings.conf"
+    capture in_server entrypoint apply
+    expect "apply refuses a country code that is not two letters" \
+        eval '((RC != 0)) && has "CHN is not a two-letter country code"'
+
+    printf 'SFTP_COUNTRY_RULE=off\n' >"$cfg/sshd/settings.conf"
+    capture in_server entrypoint apply
+    capture in_server nft list table inet sftp_countries
+    expect "turning the rule off removes the table" eval '((RC != 0)) && ! in_server test -e /run/sftp/country-rules'
+}
+
+# ---------------------------------------------------------------------------
+# The file browser's sshd: loopback only, logins by the file browser's
+# certificates only and only for accounts with web access, each account's
+# own permissions applied; the public port does not trust those certificates.
+# ---------------------------------------------------------------------------
+scenario_browser() {
+    SERVER=$RUN_ID-browser
+    local cfg=$WORK/browser/config
+    mkdir -p "$cfg/sshd"
+    printf '%s\n' "wan:wan-pw:1501::up:web,readonly" "nob:nob-pw:1502::up" >"$cfg/sshd/users.conf"
+    cp -- "$FIXTURES/files-sshd-probe.sh" "$cfg/probe.sh"
+    start_server "$SERVER" "$cfg" -e WEBUI_ENABLED=true -e WEBUI_FILES_ENABLED=true || die "browser server did not start"
+    if ! wait_healthy "$SERVER"; then
+        fail "browser server becomes healthy" "$(server_log_tail)"
+        return
+    fi
+    # 2299 is 08FB in /proc/net/tcp; 0A is LISTEN.
+    capture in_server awk '$2 ~ /:08FB$/ && $4 == "0A" { print $2 }' /proc/net/tcp /proc/net/tcp6
+    expect "the file browser's sshd listens on loopback alone" [ "$OUT" = "0100007F:08FB" ]
+    capture in_server sh /config/probe.sh
+    expect "a file browser certificate logs in on loopback" has "loopback-list ok"
+    expect "the account's own permissions apply there (read-only refuses an upload)" has "loopback-upload refused"
+    expect "the public port refuses the file browser's certificates" has "public-port refused"
+    expect "an account without web access cannot log in there" has "no-web-access refused"
+    capture in_server stat -c '%a %U' /config/sshd/keys/files_ca
+    expect "the certificate authority's key is root's alone" [ "$OUT" = "600 root" ]
+}
+
+# ---------------------------------------------------------------------------
+# entrypoint apply: changes to /config take effect while the server runs,
+# and open sessions stay connected.
+# ---------------------------------------------------------------------------
+scenario_apply() {
+    SERVER=$RUN_ID-apply
+    local cfg=$WORK/apply/config _
+    mkdir -p "$cfg/sshd"
+    printf '%s\n' "ann:ann-pw:1301:100:up" "staff:staff-pw:1302:100:up" >"$cfg/sshd/users.conf"
+    start_server "$SERVER" "$cfg" || die "apply server did not start"
+    if ! wait_healthy "$SERVER"; then
+        fail "apply server becomes healthy" "$(server_log_tail)"
+        return
+    fi
+    trust_host "$SERVER" "$cfg"
+    # A session that stays open for the whole scenario.
+    engine exec -d -e SSH_ASKPASS=/client/askpass -e SSH_ASKPASS_REQUIRE=force -e TEST_PASSWORD=ann-pw "$CLIENT" \
+        sh -c "sleep 60 | sftp ${SSH_OPTS[*]} -o PubkeyAuthentication=no ann@$SERVER_IP" >/dev/null
+    for _ in $(seq 10); do has_session ann && break; sleep 1; done
+    capture process_titles
+    expect "a session opens for the apply checks" has_session ann
+
+    printf '%s\n' "ann:ann-pw:1301:100:up" "ben:ben-pw:1303:100:up" >"$cfg/sshd/users.conf"
+    capture in_server entrypoint apply
+    expect "entrypoint apply reports success" eval '((RC == 0)) && has "applied"'
+    capture sftp_password "$CLIENT" ben ben-pw "pwd"
+    expect "an account added to users.conf logs in without a restart" eval '((RC == 0))'
+    capture in_server sh -c 'getent passwd staff; getent group staff >/dev/null && echo group-kept'
+    expect "a removed account named like a group leaves the group" eval 'lacks "staff:x" && has group-kept'
+    expect "an open session survives apply" has_session ann
+
+    printf 'SFTP_PORT=2222\n' >"$cfg/sshd/settings.conf"
+    capture in_server entrypoint apply
+    trust_host "$SERVER" "$cfg" 2222
+    capture sftp_password "$CLIENT" ben ben-pw "pwd" -P 2222
+    expect "settings.conf moves the port live" eval '((RC == 0))'
+    expect "the health check follows the new port" in_server /usr/local/bin/healthcheck
+
+    printf '%s\n' "ann:ann-pw:1301:100:up" "ben:ben-pw:0" >"$cfg/sshd/users.conf"
+    capture in_server entrypoint apply
+    expect "apply refuses a bad line and changes nothing" eval '((RC != 0)) && has "0 is root" && in_server getent passwd ben >/dev/null'
+
+    printf '%s\n' "ann:ann-pw:1301:100:up:disabled" "ben:ben-pw:1303:100:up" >"$cfg/sshd/users.conf"
+    capture in_server entrypoint apply
+    expect "disabling an account ends its open session" eval '((RC == 0)) && ! has_session ann'
+}
+
+# ---------------------------------------------------------------------------
+# The admin web UI, driven over HTTPS by tests/webui_driver.py.
+# ---------------------------------------------------------------------------
+# web <container> <step> [args...]: runs one driver step and records each
+# check it prints.
+web() {
+    local from=$1 line rest other=""
+    shift
+    while IFS= read -r line; do
+        case $line in
+            "ok "*) pass "web UI: ${line#ok }" ;;
+            "not ok "*) fail "web UI: ${line#not ok }" ;;
+            "skip "*)
+                rest=${line#skip }
+                skip "web UI: ${rest%%: *}" "${rest#*: }"
+                ;;
+            *) other+=$line$'\n' ;;
+        esac
+    done < <(engine exec "$from" python3 /client/webui_driver.py "https://$SERVER_IP:8443" "$@" 2>&1)
+    if [[ -n $other ]]; then fail "web UI step $1 ran to the end" "$other"; fi
+    if [[ $(engine inspect -f '{{.State.Running}}' "$SERVER") != true ]]; then
+        fail "the web UI server is still running after step $1" "$(server_log_tail)"
+    fi
+}
+
+scenario_webui() {
+    local cfg=$WORK/webui/config token
+    mkdir -p "$WORK/webui-off" "$cfg/sshd"
+    SERVER=$RUN_ID-webui-off
+    start_server "$SERVER" "$WORK/webui-off" -e "SFTP_USERS=wes:wes-pw" || die "web UI off server did not start"
+    if wait_healthy "$SERVER"; then
+        # 8443 is 20FB in /proc/net/tcp.
+        expect "the web UI is off by default" \
+            eval '! in_server grep -qs ":20FB " /proc/net/tcp /proc/net/tcp6 && ! in_server test -e /run/sftp-webui'
+    else
+        fail "the web UI is off by default" "$(server_log_tail)"
+    fi
+    engine rm -f "$SERVER" >/dev/null
+
+    reject "refuses plain HTTP without trusted proxies" "needs WEBUI_TRUSTED_PROXIES" wes:pw \
+        -e WEBUI_ENABLED=true -e WEBUI_PLAIN_HTTP=true
+
+    SERVER=$RUN_ID-webui
+    printf '%s\n' "wes:wes-pw:1401:100:up" >"$cfg/sshd/users.conf"
+    # The client may forward an address, as a reverse proxy does, so the
+    # countries step can present one from outside the private ranges.
+    start_server "$SERVER" "$cfg" -e WEBUI_ENABLED=true -e WEBUI_TRUSTED_PROXIES="$CLIENT_IP" \
+        -e WEBUI_FILES_ENABLED=true || die "web UI server did not start"
+    if ! wait_healthy "$SERVER"; then
+        fail "web UI server becomes healthy" "$(server_log_tail)"
+        return
+    fi
+    trust_host "$SERVER" "$cfg"
+    token=$(engine logs "$SERVER" 2>&1 | grep -o 'setup?token=[A-Za-z0-9_-]*' | tail -1 | cut -d= -f2)
+    expect "the log prints a one-time setup link" [ -n "$token" ]
+    capture in_server stat -c %a /config/webui/tls/key.pem
+    expect "the generated TLS key is mode 600" [ "$OUT" = 600 ]
+
+    web "$CLIENT" fresh
+    web "$CLIENT" setup "$token" boss "boss-password-123"
+    web "$CLIENT" protections
+    web "$CLIENT" create-account webby "webby-password-1"
+    capture sftp_password "$CLIENT" webby webby-password-1 $'pwd\nput /client/hello.txt up/x.txt'
+    expect "an account made in the UI logs in, read-only" eval '((RC == 0)) && ! in_server test -e /home/webby/up/x.txt'
+    web "$CLIENT" activity webby
+    in_server sh -c 'printf "hello from sftp\n" >/home/webby/up/hello.txt'
+    web "$CLIENT" files webby
+    web "$CLIENT" create-account fuller "fuller-password-1" full
+    in_server sh -c 'printf "hello from sftp\n" >/home/fuller/up/hello.txt'
+    # A name meant to run as markup if the page did not escape it.
+    in_server sh -c 'printf x >"/home/fuller/up/<img src=x onerror=alert(1)>.txt"'
+    web "$CLIENT" files fuller full
+    web "$CLIENT" grant-manage webby fuller
+    web "$CLIENT" manager webby fuller
+    capture in_server grep -c ':\$y\$' /config/sshd/users.conf
+    expect "the UI stores both accounts' passwords as yescrypt hashes" [ "$OUT" = 2 ]
+    web "$CLIENT" settings
+    capture in_server cat /config/sshd/settings.conf
+    expect "the setting lands in settings.conf" has "SFTP_UMASK=027"
+    web "$CLIENT" bans 203.0.113.50
+    web "$CLIENT" countries
+    web "$CLIENT" invite "reader-password-1"
+    web "$CLIENT" totp boss "boss-password-123"
+    web "$CLIENT" audit
+    web "$CLIENT" delete-account webby
+    capture sftp_password "$CLIENT" webby webby-password-1 "pwd"
+    expect "an account deleted in the UI can no longer log in" eval '((RC != 0)) && has "Permission denied"'
+    web "$CLIENT" logout
+
+    web "$ATTACKER" lockout boss
+    local _ banned=false
+    for _ in $(seq 20); do
+        capture in_server fail2ban-client get sftp-webui banip
+        if has "$ATTACKER_IP"; then banned=true; break; fi
+        sleep 1
+    done
+    expect "failed web logins are banned by fail2ban" $banned
+    capture in_server sh -c 'stat -c "%U %a" /config/webui/admins.json; stat -c "%U %a" /config/audit/webui.log'
+    expect "the admin store belongs to the web UI and the audit log to root" eval 'has "sftp-webui 600" && has "root 600"'
+}
+
+# ---------------------------------------------------------------------------
 # 1.x configuration in /config, untouched and edited.
 # ---------------------------------------------------------------------------
 scenario_legacy() {
@@ -554,9 +920,17 @@ scenario_reject() {
     reject "refuses an out-of-range port" "is not a port number" eve:pw -e SFTP_PORT=70000
     reject "refuses a flag that is not true or false" "FAIL2BAN_ENABLED=maybe must be true or false" \
         eve:pw -e FAIL2BAN_ENABLED=maybe
-    reject "refuses an unknown field after the directories" "must be rsync or empty" eve:pw:::up:shell
+    reject "refuses an unknown option after the directories" 'unknown option "shell"' eve:pw:::up:shell
+    reject "refuses the web UI's uid" "belongs to the image's web UI account" eve:pw:980
+    reject "refuses a network with host bits set" "has host bits set" eve:pw:::up:from=10.0.0.1/8
+    reject "refuses rsync with upload-only permissions" "rsync works only with full or read-only" eve:pw:::up:rsync,uploadonly
+    reject "refuses a share link length that is not a number of days" "sharedays=0 is not a number of days" eve:pw:::up:sharedays=0
+    reject "refuses noshare given twice" "option noshare is given twice" eve:pw:::up:noshare,noshare
     reject "refuses SFTP_RSYNC_USERS naming an unknown account" "not a configured account" \
         eve:pw -e SFTP_RSYNC_USERS=mallory
+    reject "refuses an unknown country rule" "is not off, block or allow" eve:pw -e SFTP_COUNTRY_RULE=deny
+    reject "refuses half a MaxMind key" "set both or neither" eve:pw -e MAXMIND_ACCOUNT_ID=123456
+    reject "refuses the file browser without the admin web UI" "needs WEBUI_ENABLED=true" eve:pw -e WEBUI_FILES_ENABLED=true
 
     mkdir -p "$WORK/empty"
     capture timeout 60 "$ENGINE" run --rm -v "$WORK/empty:/config" "$IMAGE"
@@ -588,6 +962,7 @@ mkdir -p "$WORK/client"
 printf '#!/bin/sh\nprintf "%%s\\n" "$TEST_PASSWORD"\n' >"$WORK/client/askpass"
 chmod 755 "$WORK/client/askpass"
 printf 'hello from the test suite\n' >"$WORK/client/hello.txt"
+cp tests/webui_driver.py "$WORK/client/webui_driver.py"
 engine run --rm -v "$WORK/client:/client" "$IMAGE" sh -c \
     'ssh-keygen -q -t ed25519 -N "" -C bob -f /client/bob_key &&
      ssh-keygen -q -t ed25519 -N "" -C stranger -f /client/stranger_key' || die "key generation failed"

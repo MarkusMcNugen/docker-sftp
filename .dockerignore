@@ -1,3 +1,6 @@
-# The image is built from rootfs/ alone; nothing else enters the context.
+# The image is built from rootfs/ and the web UI's sources alone; nothing
+# else enters the context.
 *
 !rootfs/
+!webui/
+webui/target/

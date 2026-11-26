@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <div class="empty">{{ crate::assets::icon("warning-circle")|safe }}<span class="empty-title">Something went wrong</span><span>{{ message }}</span></div>
+  {% if !detail.is_empty() %}<div class="card-body divided"><details class="more"><summary>What the server said</summary><pre>{% for d in detail %}{{ d }}
+{% endfor %}</pre></details></div>{% endif %}
+  <div class="card-foot"><a class="btn btn-secondary" href="/">{{ crate::assets::icon("gauge")|safe }}Back to Status</a></div>
+</section>
+{% endblock %}
