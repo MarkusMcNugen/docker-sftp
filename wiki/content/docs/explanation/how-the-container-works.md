@@ -49,7 +49,7 @@ sshd sends its messages to rsyslog through `/dev/log`. rsyslog writes every mess
 
 ## The health check
 
-`healthcheck` reads `/proc/net/tcp` and `/proc/net/tcp6` for a listening socket on each recorded port, and checks that fail2ban's socket and process exist. It opens no connection, so it adds nothing to the auth log fail2ban reads. Docker runs it every 30 seconds.
+`healthcheck` reads `/proc/net/tcp` and `/proc/net/tcp6` for a listening socket on each recorded port, and checks that fail2ban's socket and process exist. It opens no connection, so it adds nothing to the auth log fail2ban reads. Docker runs it every 30 s.
 
 ## The firewall backend
 

@@ -39,7 +39,7 @@
         <td data-label="State" data-sort="{% if r.active %}a{% else %}b{% endif %}">{% if r.active %}<span class="pill warn">{{ crate::assets::icon("prohibit")|safe }}Banned now</span>{% else %}<span class="muted">Ended</span>{% endif %}</td>
       </tr>
     {% else %}
-      <tr><td colspan="9"><div class="empty">{{ crate::assets::icon("clock-counter-clockwise")|safe }}<span class="empty-title">No bans in the history yet</span><span>Bans are copied from fail2ban every half minute and kept for good.</span></div></td></tr>
+      <tr><td colspan="9"><div class="empty">{{ crate::assets::icon("clock-counter-clockwise")|safe }}<span class="empty-title">No bans in the history yet</span><span>Bans are copied from fail2ban every 30 s and kept for good.</span></div></td></tr>
     {% endfor %}
     </tbody>
   </table></div>

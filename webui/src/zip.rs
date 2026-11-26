@@ -106,7 +106,7 @@ pub struct Writer {
 
 fn name_bytes(name: &str) -> Result<Vec<u8>> {
     if name.is_empty() || name.len() > usize::from(u16::MAX) {
-        bail!("an entry's name must hold 1 to 65535 bytes");
+        bail!("an entry's name must hold 1 to 65535 B");
     }
     Ok(name.as_bytes().to_vec())
 }

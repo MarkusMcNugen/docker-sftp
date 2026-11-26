@@ -187,7 +187,7 @@ fn enroll(token: &str, password: &str, totp_secret: &str, code: &str) -> Result<
     auth::check_password_rules(password).map_err(Failure::new)?;
     let secret = match totp_rs::Secret::try_from_base32(totp_secret) {
         Ok(bytes) if bytes.len() >= 16 => bytes.to_vec(),
-        Ok(short) => return Err(Failure::new(format!("the second-factor secret is too short ({} bytes)", short.len()))),
+        Ok(short) => return Err(Failure::new(format!("the second-factor secret is too short ({} B)", short.len()))),
         Err(e) => return Err(Failure::new(format!("the second-factor secret cannot be read: {e}"))),
     };
     let totp = auth::totp(&secret, &account)?;

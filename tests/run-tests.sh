@@ -824,6 +824,12 @@ scenario_webui() {
     capture sftp_password "$CLIENT" webby webby-password-1 $'pwd\nput /client/hello.txt up/x.txt'
     expect "an account made in the UI logs in, read-only" eval '((RC == 0)) && ! in_server test -e /home/webby/up/x.txt'
     web "$CLIENT" activity webby
+    # A session that stays open while the pages that list sessions load.
+    engine exec -d -e SSH_ASKPASS=/client/askpass -e SSH_ASKPASS_REQUIRE=force -e TEST_PASSWORD=webby-password-1 "$CLIENT" \
+        sh -c "sleep 30 | sftp ${SSH_OPTS[*]} -o PubkeyAuthentication=no webby@$SERVER_IP" >/dev/null
+    for _ in $(seq 10); do has_session webby && break; sleep 1; done
+    expect "a session stays open for the session checks" has_session webby
+    web "$CLIENT" sessions webby "$CLIENT_IP"
     in_server sh -c 'printf "hello from sftp\n" >/home/webby/up/hello.txt'
     web "$CLIENT" files webby
     web "$CLIENT" create-account fuller "fuller-password-1" full

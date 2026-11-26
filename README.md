@@ -15,6 +15,8 @@
 
 Each account is jailed in its home directory, fail2ban bans password guessers, and one `/config` volume holds everything, applied again on every start.
 
+<a href="https://markusmcnugen.github.io/docker-sftp/docs/how-to/use-the-web-ui/"><img src="https://raw.githubusercontent.com/MarkusMcNugen/docker-sftp/main/.github/dashboard.png" alt="The admin web UI's Status page: accounts, sessions, bans, sign-in and transfer charts, and who is connected"/></a>
+
 </div>
 
 ---
@@ -123,7 +125,7 @@ Bob has no password and logs in with the key in `/config/userkeys/bob.pub`. Caro
 | `SFTP_LOG_TRANSFERS` | `false` | Log every file operation |
 | `SFTP_UMASK` | `022` | Umask for uploaded files, such as `002` for group-writable |
 | `SFTP_CRYPTO_POLICY` | `modern` | `strict` accepts encrypt-then-MAC MACs only |
-| `SFTP_AUTH_LOG_MAX_BYTES` | `10485760` | Size at which the internal auth log rotates; `0` for no cap |
+| `SFTP_AUTH_LOG_MAX_BYTES` | `10485760` | Size in B at which the internal auth log rotates; `0` for no cap |
 | `SFTP_RSYNC_USERS` | | Accounts allowed rsync over SSH, or `*` for all |
 | `FAIL2BAN_ENABLED` | `true` | `false` runs without fail2ban |
 | `TZ` | `UTC` | Time zone for log timestamps |

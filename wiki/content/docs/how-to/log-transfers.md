@@ -3,7 +3,31 @@ title: How To Log Transfers
 weight: 7
 ---
 
-Set `-e SFTP_LOG_TRANSFERS=true` and restart. Every file operation then appears in `docker logs`:
+With transfer logging on, every file operation over SFTP is logged and kept in the history: uploads, downloads, renames, deletions and new folders. Logins are logged either way.
+
+## Turn it on
+
+{{< tabs >}}
+{{< tab name="Web UI" selected=true >}}
+Open **Settings**, set **Log every file operation** to on in the **SFTP server** card, and save. It applies at once.
+{{< /tab >}}
+{{< tab name="Command line" >}}
+Add `SFTP_LOG_TRANSFERS=true` to `/config/sshd/settings.conf` and run `docker exec sftp entrypoint apply`, or set it in the container's environment and restart.
+{{< /tab >}}
+{{< /tabs >}}
+
+## See the transfers
+
+{{< tabs >}}
+{{< tab name="Web UI" selected=true >}}
+The **Activity** page shows who did what, as it happens. **People** gives a card for each account active in the last 24 hours with its latest operations and totals; **Log** lists every sign-in and file operation, filtered by account, kind and time.
+
+![The Activity page](/screenshots/activity.png)
+
+What the file browser does is recorded there too, with the person who did it and their address.
+{{< /tab >}}
+{{< tab name="Command line" >}}
+Every file operation appears in `docker logs`:
 
 ```text
 internal-sftp[110]: session opened for local user alice from [10.89.0.3]
@@ -14,7 +38,9 @@ internal-sftp[110]: remove name "/upload/blob2"
 internal-sftp[110]: session closed for local user alice from [10.89.0.3]
 ```
 
-Paths are as the user sees them, relative to their jail. The same lines also go to the internal auth log.
+Paths are as the user sees them, relative to their jail. The same lines also go to the internal auth log, and from there into `/config/webui/history.sqlite3` when the web UI is on.
+{{< /tab >}}
+{{< /tabs >}}
 
 ## How it works
 
@@ -24,7 +50,7 @@ The setting adds `-l info` to the SFTP server's command line. If you set your ow
 
 ## When transfers are not logged
 
-At start the entrypoint checks each socket and warns:
+The entrypoint checks each socket and warns:
 
 ```text
 warning: rsyslogd did not create /home/alice/dev/log, so transfers in that chroot are not logged.

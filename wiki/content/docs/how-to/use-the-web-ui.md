@@ -5,7 +5,20 @@ weight: 13
 
 The image includes an admin web UI for accounts, groups, keys, permissions, settings, bans, country rules, the activity history, logs and the audit log. It is off until you turn it on, and changes made in it apply at once, without a restart.
 
-[How To Group Accounts](../group-accounts/), [How To Block Countries](../block-countries/) and [How To Use The File Browser](../use-the-file-browser/) cover the pages for those.
+![The Status page: accounts, sessions, bans, sign-in and transfer charts, and who is connected](/screenshots/status.png)
+
+Each page has a how-to that shows it beside the command line way of doing the same thing:
+
+| Page | How-to |
+|---|---|
+| Accounts | [How To Add And Change Users](../add-users/), [How To Use Public Keys](../use-public-keys/), [How To Set Account Permissions](../set-account-permissions/), [How To Use Hashed Passwords](../use-hashed-passwords/), [How To Allow rsync](../allow-rsync/) |
+| Groups | [How To Group Accounts](../group-accounts/) |
+| Bans | [How To Tune fail2ban](../tune-fail2ban/), [How To Block Countries](../block-countries/) |
+| Settings | [How To Change sshd Settings](../change-sshd-settings/), [How To Log Transfers](../log-transfers/) |
+| Activity | [How To Log Transfers](../log-transfers/) |
+| Logs | [How To Fix A Failure](../fix-a-failure/) |
+
+The file browser, for account holders rather than admins, has its own how-to: [How To Use The File Browser](../use-the-file-browser/).
 
 ## Turn it on
 
@@ -33,7 +46,13 @@ $ docker logs sftp 2>&1 | grep setup
 ... sftp-webui: no admin exists yet; within one hour, open https://<this server>:8443/setup?token=... to create one
 ```
 
-Open it, choose a name and a password of at least 12 characters, and you are signed in as a full admin. Then open **Your sign-in** and set up two-factor sign-in with an authenticator app.
+Open it, choose a name and a password of at least 12 characters, and you are signed in as a full admin.
+
+![Creating the first admin from the setup link](/screenshots/setup.png)
+
+Then open **Your sign-in**, from your name at the foot of the menu, and set up two-factor sign-in with an authenticator app.
+
+![Two-factor sign-in on the Your sign-in page](/screenshots/me-two-factor.png)
 
 If nobody uses the link within the hour, opening the login page prints a new one.
 
@@ -47,6 +66,14 @@ Under **Admins**, an invite creates a link that works once, for 24 hours; send i
 | read-only | view every page; change only their own password and two-factor sign-in |
 
 The last full admin cannot be removed or demoted.
+
+![Inviting an admin on the Admins page](/screenshots/admins-invite.png)
+
+## The audit log
+
+Every change an admin makes is written to `/config/audit/webui.log`, with who made it, from which address, and whether it worked. The **Audit log** page shows it, newest first, and searches it.
+
+![The Audit log page](/screenshots/audit.png)
 
 ## Supply admins from a file
 

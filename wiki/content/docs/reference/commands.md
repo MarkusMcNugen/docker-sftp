@@ -42,7 +42,7 @@ entrypoint: fatal: user "eve": directory "../etc" may not contain . or ..
 /usr/local/bin/healthcheck
 ```
 
-Prints one line and exits 0 when healthy, 1 otherwise. Docker runs it every 30 seconds.
+Prints one line and exits 0 when healthy, 1 otherwise. Docker runs it every 30 s.
 
 | Output | Exit | Meaning |
 |---|---|---|

@@ -7,7 +7,14 @@ Accounts are SFTP-only unless you allow rsync for them. An allowed account can r
 
 ## Allow an account
 
-Either end its line in `users.conf` with `:rsync`:
+{{< tabs >}}
+{{< tab name="Web UI" selected=true >}}
+Open the account from **Accounts**, turn on **rsync over SSH** under **Access**, and choose **Save and apply**. For every member of a group, turn on **Members may use rsync** on the group's page instead.
+
+![The Access section of an account with rsync over SSH on](/screenshots/account-access-rsync.png)
+{{< /tab >}}
+{{< tab name="Command line" >}}
+Either end its line in `users.conf` with the `rsync` option:
 
 ```text
 alice:changeme:1001:100:upload:rsync
@@ -20,7 +27,11 @@ or list it in `SFTP_RSYNC_USERS`, separated by spaces, or `*` for every account:
 -e SFTP_RSYNC_USERS="alice bob"
 ```
 
-Restart the container. The log says `user alice: rsync allowed`.
+Apply a change to `users.conf` with `docker exec sftp entrypoint apply`; a change to the environment needs a restart. The log says `user alice: rsync allowed`.
+{{< /tab >}}
+{{< /tabs >}}
+
+rsync needs full access or read-only: it does not go through the SFTP requests the other permissions filter ([How To Set Account Permissions](../set-account-permissions/)).
 
 ## Use it
 
@@ -33,13 +44,13 @@ Paths are inside the jail, as in SFTP: `upload/photos/` is `/home/alice/upload/p
 
 ## How it works
 
-The account's login shell becomes a gate, `/usr/local/libexec/sftp/rsync-gate`, which runs a command only if it is an rsync server command (`rsync --server ...`) and refuses every other one with `This service allows sftp and rsync connections only.` At every start the entrypoint copies `sh`, `rsync`, the gate and the libraries they load into the account's home, root-owned, at the paths they have in the image; the jail is unchanged, so `/` in the session is still the home directory. The user sees root-owned `bin`, `lib`, `lib64` and `usr` folders there and cannot change them.
+The account's login shell becomes a gate, `/usr/local/libexec/sftp/rsync-gate`, which runs a command only if it is an rsync server command (`rsync --server ...`) and refuses every other one with `This service allows sftp and rsync connections only.` Each time the configuration is applied, the entrypoint copies `sh`, `rsync`, the gate and the libraries they load into the account's home, root-owned, at the paths they have in the image; the jail is unchanged, so `/` in the session is still the home directory. The user sees root-owned `bin`, `lib`, `lib64` and `usr` folders there and cannot change them.
 
 The account's SFTP sessions keep transfer logging and `SFTP_UMASK`.
 
 ## Take it away
 
-Remove `:rsync` or the name and restart: the copied files are removed and the account is SFTP-only again.
+Turn **rsync over SSH** off, or remove the `rsync` option or the name, and apply: the copied files are removed and the account is SFTP-only again.
 
 ## When it is refused
 

@@ -48,8 +48,8 @@
     return { path, name: path.slice(path.lastIndexOf("/") + 1), kind: "file", preview: "", size: "" };
   }
   function showSize(n) {
-    if (n < 1000) return `${n} ${n === 1 ? "byte" : "bytes"}`;
-    const units = ["KB", "MB", "GB", "TB", "PB"];
+    if (n < 1000) return `${n} B`;
+    const units = ["kB", "MB", "GB", "TB", "PB"];
     let v = n / 1000;
     let u = 0;
     while (v >= 1000 && u < units.length - 1) { v /= 1000; u += 1; }

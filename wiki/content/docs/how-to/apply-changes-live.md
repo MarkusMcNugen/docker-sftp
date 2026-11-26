@@ -3,7 +3,7 @@ title: How To Apply Changes Without A Restart
 weight: 4
 ---
 
-After editing anything in `/config`, apply it to the running server:
+The admin web UI applies each change when you save it, so there is nothing more to run. After editing anything in `/config` by hand, apply it to the running server:
 
 ```console
 $ docker exec sftp entrypoint apply
@@ -24,4 +24,4 @@ SFTP_PORT=2222
 SFTP_UMASK=002
 ```
 
-It accepts `SFTP_PORT`, `SFTP_LOG_TRANSFERS`, `SFTP_UMASK`, `SFTP_CRYPTO_POLICY` and `SFTP_AUTH_LOG_MAX_BYTES`. A setting in the container's environment wins over the file. A changed `SFTP_PORT` needs the published port changed too.
+It accepts `SFTP_PORT`, `SFTP_LOG_TRANSFERS`, `SFTP_UMASK`, `SFTP_CRYPTO_POLICY`, `SFTP_AUTH_LOG_MAX_BYTES`, `SFTP_COUNTRY_RULE`, `SFTP_COUNTRIES` and the four `FILES_SHARE` settings. A setting in the container's environment wins over the file. A changed `SFTP_PORT` needs the published port changed too.

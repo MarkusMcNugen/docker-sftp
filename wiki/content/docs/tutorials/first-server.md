@@ -122,8 +122,34 @@ docker exec sftp fail2ban-client status sshd
 
 After five failures within ten minutes, the address appears under `Banned IP list` and its connections are refused for an hour. Lift a ban with `docker exec sftp fail2ban-client set sshd unbanip <address>`.
 
+## 9. Open the admin web UI
+
+Everything above can also be done in a browser. Recreate the container with the admin web UI on and its port published, keeping the same `/config`:
+
+```bash
+docker rm -f sftp
+docker run -d --name sftp --restart unless-stopped \
+  --cap-add NET_ADMIN --cap-add NET_RAW \
+  -p 2222:22 -p 8443:8443 \
+  -e WEBUI_ENABLED=true \
+  -v ~/sftp/config:/config \
+  -v ~/sftp/alice:/home/alice/upload \
+  markusmcnugen/sftp
+```
+
+Find the setup link in the log and open it, with `<this server>` replaced by the machine's address. Your browser warns once about the self-signed certificate. Choose a name and a password for the first admin:
+
+```bash
+docker logs sftp 2>&1 | grep setup
+```
+
+The **Status** page shows who is connected and the sign-ins and transfers of the last day. Alice and Bob are under **Accounts**, and the address you just got banned is under **Bans**, where you can lift it.
+
+![The Status page](/screenshots/status.png)
+
 ## Next
 
+- Learn the admin web UI's pages: [How To Use The Admin Web UI](../../how-to/use-the-web-ui/).
 - Hash Alice's password instead of storing it in plain text: [How To Use Hashed Passwords](../../how-to/use-hashed-passwords/).
 - See every file operation in the log: [How To Log Transfers](../../how-to/log-transfers/).
 - Run it with the fewest privileges: [How To Harden The Container](../../how-to/harden-the-container/).

@@ -286,7 +286,7 @@ impl Sftp {
     async fn receive(&mut self) -> Result<(u8, Vec<u8>)> {
         let len = self.output.read_u32().await.context("the sftp session ended")?;
         if len == 0 || len > MAX_PACKET {
-            bail!("the server sent a packet of {len} bytes");
+            bail!("the server sent a packet of {len} B");
         }
         let kind = self.output.read_u8().await.context("the sftp session ended")?;
         let mut body = vec![0u8; usize::try_from(len - 1).context("the packet is too large")?];

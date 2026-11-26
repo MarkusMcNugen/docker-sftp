@@ -1,10 +1,9 @@
 //! What runs: open SFTP sessions, listening ports, services and host keys,
 //! read from /proc and the files the entrypoint keeps in /run/sftp.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::io::ErrorKind;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
@@ -58,32 +57,10 @@ fn session_account(title: &str) -> Option<&str> {
     if spec::validate_name(name).is_ok() { Some(name) } else { None }
 }
 
-/// /proc/net/tcp writes each 32-bit word of an address in host byte order.
-fn decode_addr(hex: &str) -> Result<IpAddr> {
-    if hex.len() != 8 && hex.len() != 32 {
-        bail!("unexpected address {hex} in /proc/net");
-    }
-    let mut bytes = Vec::with_capacity(16);
-    for i in 0..hex.len() / 8 {
-        let word = u32::from_str_radix(&hex[i * 8..i * 8 + 8], 16)
-            .with_context(|| format!("unexpected address {hex} in /proc/net"))?;
-        bytes.extend_from_slice(&word.to_le_bytes());
-    }
-    if bytes.len() == 4 {
-        return Ok(IpAddr::V4(Ipv4Addr::new(bytes[0], bytes[1], bytes[2], bytes[3])));
-    }
-    let mut arr = [0u8; 16];
-    arr.copy_from_slice(&bytes);
-    Ok(IpAddr::V6(Ipv6Addr::from(arr)))
-}
-
-/// One line of /proc/net/tcp or tcp6: local port, remote address, state
-/// and inode.
+/// One line of /proc/net/tcp or tcp6: the local port, and whether it listens.
 struct TcpEntry {
     local_port: u16,
-    remote: String,
     listening: bool,
-    inode: u64,
 }
 
 fn tcp_entries() -> Result<Vec<TcpEntry>> {
@@ -101,45 +78,13 @@ fn tcp_entries() -> Result<Vec<TcpEntry>> {
             }
             let bad = || format!("unexpected line in {file}: {line}");
             let Some((_, local_port)) = f[1].split_once(':') else { bail!(bad()) };
-            let Some((addr, port)) = f[2].split_once(':') else { bail!(bad()) };
-            let ip = sftp_webui::net::canonical(decode_addr(addr)?);
-            let port = u16::from_str_radix(port, 16).with_context(bad)?;
             entries.push(TcpEntry {
                 local_port: u16::from_str_radix(local_port, 16).with_context(bad)?,
-                remote: if ip.is_ipv6() { format!("[{ip}]:{port}") } else { format!("{ip}:{port}") },
                 listening: f[3] == "0A",
-                inode: f[9].parse().with_context(bad)?,
             });
         }
     }
     Ok(entries)
-}
-
-fn socket_inodes(pid: u32) -> Result<HashSet<u64>> {
-    let mut inodes = HashSet::new();
-    let dir = format!("/proc/{pid}/fd");
-    let entries = match fs::read_dir(&dir) {
-        Ok(e) => e,
-        Err(e) if gone(&e) => return Ok(inodes),
-        Err(e) => return Err(e).with_context(|| format!("cannot list {dir}")),
-    };
-    for entry in entries {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(e) if gone(&e) => continue,
-            Err(e) => return Err(e).with_context(|| format!("cannot list {dir}")),
-        };
-        let target = match fs::read_link(entry.path()) {
-            Ok(t) => t,
-            Err(e) if gone(&e) => continue,
-            Err(e) => return Err(e).with_context(|| format!("cannot read a link in {dir}")),
-        };
-        let target = target.to_string_lossy();
-        if let Some(inode) = target.strip_prefix("socket:[").and_then(|r| r.strip_suffix(']')) {
-            inodes.insert(inode.parse().with_context(|| format!("unexpected socket link {target}"))?);
-        }
-    }
-    Ok(inodes)
 }
 
 fn boot_time() -> Result<u64> {
@@ -166,21 +111,20 @@ fn start_time(pid: u32, boot: u64) -> Result<Option<u64>> {
     Ok(Some(boot + ticks / hz))
 }
 
+/// The open sessions, one per sshd-session monitor. A session's address is
+/// the one its login came from, as the history collector recorded it: the
+/// monitor's sockets cannot be read without CAP_SYS_PTRACE, which sshd's
+/// processes, being non-dumpable or another account's, would require. It is
+/// empty in the second before the collector reads the login.
 pub fn sessions() -> Result<Vec<SessionInfo>> {
-    let peers: HashMap<u64, String> = tcp_entries()?.into_iter().map(|e| (e.inode, e.remote)).collect();
     let boot = boot_time()?;
+    let db = crate::history::open()?;
     let mut out = Vec::new();
     for pid in proc_ids()? {
         let Some(title) = title(pid)? else { continue };
         let Some(account) = session_account(&title) else { continue };
         let Some(since) = start_time(pid, boot)? else { continue };
-        let mut address = String::new();
-        for inode in socket_inodes(pid)? {
-            if let Some(peer) = peers.get(&inode) {
-                address = peer.clone();
-                break;
-            }
-        }
+        let address = crate::history::login_address(&db, pid, since)?;
         out.push(SessionInfo { pid, account: account.to_string(), address, since });
     }
     out.sort_by_key(|s| s.since);

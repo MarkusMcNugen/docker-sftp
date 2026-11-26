@@ -107,7 +107,7 @@ impl Reader {
     /// Reads a header block.
     pub fn header(&mut self, block: &[u8]) -> Result<Step> {
         if block.len() != BLOCK as usize {
-            bail!("a tar header is {BLOCK} bytes, not {}", block.len());
+            bail!("a tar header is {BLOCK} B, not {} B", block.len());
         }
         if block.iter().all(|&b| b == 0) {
             return Ok(Step::End);

@@ -5,6 +5,8 @@ weight: 14
 
 The file browser lets account holders work with their files in a web browser: upload, download, preview, search and share. It runs beside the admin web UI on its own port, and each account is let in by an admin.
 
+![The file browser: the folder tree, the files and the details of the chosen one](/screenshots/files-details.png)
+
 ## Turn it on
 
 ```yaml
@@ -26,11 +28,26 @@ The file browser needs the admin web UI, where admins let accounts in. It serves
 
 ## Let an account in
 
-1. In the admin web UI, open the account and turn on **File browser**, or turn on **Members may use the file browser** for one of its groups. In `users.conf` this is the `web` option.
-2. On the account's page, **Make a sign-in link**. The link works once, for 24 hours; send it to the account holder over a channel you trust.
-3. The holder opens it, chooses a web password of at least 12 characters, and adds the code from an authenticator app.
+1. Allow the account to use the file browser:
 
-The web password is separate from the account's SFTP password, so an account that logs in with a key only can use the file browser too. Every sign-in asks for the password and a code from the app, except from `WEBUI_TRUSTED_NETWORKS`, and each code works once. A session ends after half an hour unused, or twelve hours in all.
+{{< tabs >}}
+{{< tab name="Web UI" selected=true >}}
+Open the account and turn on **File browser** under **Access**, or turn on **Members may use the file browser** for one of its groups.
+{{< /tab >}}
+{{< tab name="Command line" >}}
+Add the `web` option to the account's line in `users.conf`, or to one of its groups in `groups.conf`, and run `docker exec sftp entrypoint apply`.
+{{< /tab >}}
+{{< /tabs >}}
+
+2. On the account's page, in the **File browser** card, **Make a sign-in link**. The link works once, for 24 hours; send it to the account holder over a channel you trust. The card says whether the account has set up its sign-in.
+
+![The File browser card of an account, once its sign-in is set up](/screenshots/account-files.png)
+
+3. The holder opens the link, chooses a web password of at least 12 characters, and adds the code from an authenticator app.
+
+![Setting up a file browser sign-in from the link](/screenshots/files-invite-alice.png)
+
+The web password is separate from the account's SFTP password, so an account that logs in with a key only can use the file browser too. Every sign-in asks for the password and a code from the app, except from `WEBUI_TRUSTED_NETWORKS`, and each code works once. A session ends after half an hour unused, or 12 hours in all.
 
 If the holder loses the password or the phone, **Reset sign-in** on the account's page and make a new link.
 
@@ -46,15 +63,25 @@ The page has three panes: the folder tree, the files of the open folder as a lis
 - See in a file's details who added it, from where and how, and everything done with it since.
 - Open a zip, tar, tar.gz or tgz archive to list its entries, download one, or unpack it beside itself.
 
+![An archive's entries, listed without unpacking it](/screenshots/files-archive.png)
+
+![A picture in the preview](/screenshots/files-preview.png)
+
 Each account can do in the file browser exactly what it can do over SFTP: the file browser works through SFTP, with the account's permissions and jail, and every operation goes into the same history and transfer log.
 
 ## Open the files of other accounts
 
-An account with `manage=name` on its line, or `manage=@group` for every member of a group, sees those accounts under **You manage** and can open their files, with each account's own permissions. What it does there is logged under both names. **Can open the files of** on the account's page sets this.
+An account with `manage=name` on its line, or `manage=@group` for every member of a group, sees those accounts in the menu and can open their files, with each account's own permissions. What it does there is logged under both names. **Can open the files of** on the account's page sets this.
+
+![A manager in the files of an account it manages](/screenshots/files-manage.png)
 
 ## Share a file by link
 
-Choose a file, then **Share**. Pick how long the link lasts and, if you like, a password, and copy the link: it is shown once. The link works for one download, then stops; **Links you shared** lists every link you made, used or waiting, and ends one early.
+Choose a file, then **Share**. Pick how long the link lasts and, if you like, a password, and choose **Make the link**. The link is shown once, so copy it then. It works for one download, then stops; **Links you shared** lists every link you made, used or waiting, and ends one early.
+
+![A share link, made and shown once](/screenshots/files-share-made.png)
+
+![The page a share link opens](/screenshots/share-page.png)
 
 The part of the link after the `#` is the key to the file. Browsers do not send it when they open the page, so it is in no address a server or a proxy logs; the page sends it in the body of its own requests. The server keeps only its SHA-256, so a link cannot be recovered from the server. Send the password, when there is one, apart from the link. A wrong password counts toward the address's sign-in lockout and fail2ban.
 
@@ -68,3 +95,5 @@ The admin web UI's **Settings** page sets what links may do:
 | `FILES_SHARE_PASSWORD` | `false` | `true` makes every link need a password |
 
 A group or an account can only tighten that policy, with `noshare`, `sharedays=N` and `sharepassword` on its line, or the matching controls on its page. A link to a file obeys the limits of the account whose file it is and of the account making it.
+
+![Links you shared](/screenshots/files-links.png)

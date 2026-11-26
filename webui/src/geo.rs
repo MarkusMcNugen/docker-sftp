@@ -119,7 +119,7 @@ pub fn mmdb_from_tar_gz(archive: &[u8]) -> Result<Vec<u8>> {
         .read_to_end(&mut tar)
         .context("cannot unpack the download")?;
     if tar.len() as u64 > MAX_DATABASE {
-        bail!("the download unpacks to more than {MAX_DATABASE} bytes");
+        bail!("the download unpacks to more than {MAX_DATABASE} B");
     }
     let mut at = 0;
     while at + 512 <= tar.len() {

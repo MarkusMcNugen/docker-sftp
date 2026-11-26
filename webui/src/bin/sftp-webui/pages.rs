@@ -561,8 +561,15 @@ pub struct SessionRow {
     pub pid: u32,
     pub account: String,
     pub address: String,
+    /// True for the file browser's own session, which logs in over loopback.
+    pub browser: bool,
     pub since: String,
     pub since_iso: String,
+}
+
+/// True for an address the file browser's sessions log in from: loopback.
+fn from_file_browser(address: &str) -> bool {
+    address.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
 fn session_rows(status: &Status) -> Vec<SessionRow> {
@@ -573,6 +580,7 @@ fn session_rows(status: &Status) -> Vec<SessionRow> {
             pid: s.pid,
             account: s.account.clone(),
             address: s.address.clone(),
+            browser: from_file_browser(&s.address),
             since: ago(s.since),
             since_iso: timefmt::iso(s.since),
         })
@@ -1191,6 +1199,7 @@ fn account_view(
                     pid: s.pid,
                     account: s.account.clone(),
                     address: s.address.clone(),
+                    browser: from_file_browser(&s.address),
                     since: ago(s.since),
                     since_iso: timefmt::iso(s.since),
                 })
@@ -1740,7 +1749,7 @@ fn duration_label(secs: i64) -> String {
             return count(secs / size, one, many);
         }
     }
-    count(secs, "second", "seconds")
+    format!("{secs} s")
 }
 
 /// The presets with `current` selected. A current value that is no preset
@@ -2540,11 +2549,12 @@ pub async fn settings_save(
 // Activity
 // ---------------------------------------------------------------------------
 
-/// A size in bytes for people: "845 KB", "2.4 MB", in steps of 1000.
+/// A size in bytes for people, with the SI symbol of its unit: "694 B",
+/// "845 kB", "2.4 MB", in steps of 1000.
 pub(crate) fn size_label(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["KB", "MB", "GB", "TB", "PB"];
+    const UNITS: [&str; 5] = ["kB", "MB", "GB", "TB", "PB"];
     if bytes < 1000 {
-        return count(bytes, "byte", "bytes");
+        return format!("{bytes} B");
     }
     let mut value = bytes as f64 / 1000.0;
     let mut unit = 0;
@@ -3326,14 +3336,20 @@ mod tests {
         assert_eq!(remaining(4 * 86_400), "4 days");
         assert_eq!(remaining(86_400 + 3_600), "1 day 1 hour");
         assert_eq!(duration_label(-1), "Forever");
-        assert_eq!(duration_label(90), "90 seconds");
+        assert_eq!(duration_label(90), "90 s");
+    }
+
+    #[test]
+    fn loopback_sessions_are_the_file_browsers() {
+        assert!(from_file_browser("127.0.0.1") && from_file_browser("::1"));
+        assert!(!from_file_browser("10.89.0.23") && !from_file_browser(""));
     }
 
     #[test]
     fn sizes_read_in_steps_of_1000() {
-        assert_eq!(size_label(1), "1 byte");
-        assert_eq!(size_label(999), "999 bytes");
-        assert_eq!(size_label(845_000), "845 KB");
+        assert_eq!(size_label(1), "1 B");
+        assert_eq!(size_label(999), "999 B");
+        assert_eq!(size_label(845_000), "845 kB");
         assert_eq!(size_label(2_400_000), "2.4 MB");
         assert_eq!(size_label(12_300_000), "12 MB");
         assert_eq!(size_label(5_000_000_000), "5.0 GB");

@@ -204,6 +204,26 @@ def step_activity(account):
           status == 200 and 'class="card person"' in text and f">{account}<" in text, f"{status}")
 
 
+def step_sessions(account, address):
+    st = load("admin")
+    shown = f"<code>{address}</code>"
+    # The collector reads the session's login within a second.
+    for _ in range(20):
+        status, _, text = request(st, "GET", "/")
+        if status == 200 and shown in text:
+            break
+        time.sleep(0.5)
+    check("the Status page opens while an SFTP session is open and lists it with its address",
+          status == 200 and f">{account}<" in text and shown in text, f"{status} {alerts(text)}")
+    status, _, text = request(st, "GET", "/sessions")
+    check("the live session rows list the open session", status == 200 and shown in text, f"{status} {alerts(text)}")
+    status, _, text = request(st, "GET", "/accounts")
+    check("the Accounts page opens while an SFTP session is open", status == 200, f"{status} {alerts(text)}")
+    status, _, text = request(st, "GET", f"/accounts/{account}")
+    check("an account's page opens while its session is open and lists it",
+          status == 200 and address in text, f"{status} {alerts(text)}")
+
+
 def step_settings():
     st = load("admin")
     _, _, page = request(st, "GET", "/settings")
@@ -310,7 +330,7 @@ def step_files(name, access="readonly"):
         check("an upload that stopped goes on from where the server's copy ends", status == 200 and held == "1500",
               f"{status} {held!r} {text[:80]!r}")
         status, _, text = request(user, "PUT", "/upload?path=/up/part.bin&offset=10", data=b"c", host=FILES_HOST, headers=token)
-        check("an upload does not go on from anywhere but the copy's end", status == 422 and "holds 1500 bytes" in text,
+        check("an upload does not go on from anywhere but the copy's end", status == 422 and "holds 1500 B" in text,
               f"{status} {text[:80]!r}")
         status, _, _ = request(user, "POST", "/mkdirs", {"path": "/up/deep/er"}, host=FILES_HOST, headers=token)
         status2, _, _ = request(user, "PUT", "/upload?path=/up/tree/a/b.txt&parents=true", data=b"leaf", host=FILES_HOST,
@@ -410,7 +430,7 @@ def step_files(name, access="readonly"):
         check("the maker's links page shows the link as used", "/up/hello.txt" in listed and ">Used<" in listed, "")
         _, _, part = request(user, "GET", "/details?path=/up/hello.txt", host=FILES_HOST)
         check("the details pane names a file's size and permissions",
-              "<dt>Size</dt><dd>16 bytes</dd>" in part and "<dt>Permissions</dt>" in part, f"{part[:160]!r}")
+              "<dt>Size</dt><dd>16 B</dd>" in part and "<dt>Permissions</dt>" in part, f"{part[:160]!r}")
         request(user, "PUT", "/upload?path=/up/history.txt", data=b"kept", host=FILES_HOST, headers=token)
         # The collector reads the event log once a second.
         for _ in range(20):
@@ -652,6 +672,7 @@ STEPS = {
     "protections": step_protections,
     "create-account": step_create_account,
     "activity": step_activity,
+    "sessions": step_sessions,
     "settings": step_settings,
     "bans": step_bans,
     "countries": step_countries,

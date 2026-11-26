@@ -46,6 +46,13 @@ params:
 
   page:
     width: wide
+    # A reader who picks the Command line tab sees it in every tab group.
+    tabs:
+      sync: true
+
+  # Screenshots open full size when clicked.
+  imageZoom:
+    enable: true
 
   theme:
     default: system

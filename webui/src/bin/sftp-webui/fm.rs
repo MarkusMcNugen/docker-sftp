@@ -1163,7 +1163,7 @@ async fn receive(s: &mut Sftp, path: &str, offset: Option<u64>, parents: bool, m
                 None => bail!("the server gives no size for {path}"),
             };
             if held != from {
-                bail!("the server holds {held} bytes of {}, so the upload goes on from there", name_of(path));
+                bail!("the server holds {held} B of {}, so the upload goes on from there", name_of(path));
             }
             (Write::Resume, from)
         }
@@ -1690,7 +1690,7 @@ async fn read_at(s: &mut Sftp, file: &[u8], offset: u64, len: u64) -> Result<Vec
             None => break,
         }
     }
-    out.truncate(usize::try_from(len).map_err(|e| anyhow!("{len} bytes do not fit in memory here: {e}"))?);
+    out.truncate(usize::try_from(len).map_err(|e| anyhow!("{len} B do not fit in memory here: {e}"))?);
     Ok(out)
 }
 
@@ -1771,7 +1771,7 @@ async fn unpack_entry(s: &mut Sftp, file: &[u8], e: &zip::Listed, mut sink: Sink
         for piece in pieces {
             made += piece.len() as u64;
             if made > e.size {
-                bail!("{} unpacks to more than the {} bytes it states", e.name, e.size);
+                bail!("{} unpacks to more than the {} B it states", e.name, e.size);
             }
             crc.update(&piece);
             match &mut sink {
@@ -1932,7 +1932,7 @@ impl TarSource {
             match reader.header(&block)? {
                 tar::Step::End => return Ok(None),
                 tar::Step::Extension { typeflag, size } => {
-                    let len = usize::try_from(size).map_err(|e| anyhow!("an extension header of {size} bytes: {e}"))?;
+                    let len = usize::try_from(size).map_err(|e| anyhow!("an extension header of {size} B: {e}"))?;
                     let data = self.take(s, file, len).await?;
                     reader.extension(typeflag, &data)?;
                     self.skip(s, file, tar::padding(size)).await?;

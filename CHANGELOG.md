@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.2.1
+
+- The Status page, the accounts list and every account page opened with an error whenever an SFTP client was connected. The open sessions now take their address from the login sshd logged, so the pages no longer need to read sshd's sockets, which a container without `CAP_SYS_PTRACE` cannot do.
+- A session the file browser opens for its user shows as "File browser" instead of 127.0.0.1.
+- Sizes, intervals and times in the web UI, the file browser and their messages use unit symbols: 694 B, 845 kB, 2.4 MB, 10 s.
+- The documentation shows the web UI and the command line side by side in each how-to, with screenshots, and the README opens with the dashboard.
+
 ## 2.2.0
 
 ### Admin web UI

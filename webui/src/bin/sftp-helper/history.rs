@@ -44,6 +44,7 @@ CREATE INDEX IF NOT EXISTS events_by_time ON events (time);
 CREATE INDEX IF NOT EXISTS events_by_account ON events (account, time);
 CREATE TABLE IF NOT EXISTS position (source TEXT PRIMARY KEY, inode INTEGER NOT NULL, offset INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (pid INTEGER PRIMARY KEY, account TEXT NOT NULL, address TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS logins (pid INTEGER PRIMARY KEY, time INTEGER NOT NULL, account TEXT NOT NULL, address TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS bans (
     jail TEXT NOT NULL,
     address TEXT NOT NULL,
@@ -76,13 +77,43 @@ pub fn open() -> Result<Connection> {
     Ok(db)
 }
 
+/// The address an sshd-session monitor logged its login from: the login
+/// recorded for `pid` no earlier than the process, which started at `since`,
+/// or an empty string until the collector has read it. The second of slack
+/// covers /proc/stat's boot time, which is rounded down to the second.
+pub fn login_address(db: &Connection, pid: u32, since: u64) -> Result<String> {
+    db.query_row(
+        "SELECT COALESCE(MAX(address), '') FROM logins WHERE pid = ?1 AND time + 1 >= ?2",
+        params![pid, int(since, "start time")?],
+        |row| row.get(0),
+    )
+    .context("cannot read the logins")
+}
+
+/// Forgets the logins of processes that have ended. A process id the
+/// system reuses needs no forgetting: login_address() takes only a login
+/// no earlier than the process.
+fn forget_ended_logins(db: &Connection) -> Result<()> {
+    let pids: Vec<i64> = db
+        .prepare("SELECT pid FROM logins")?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for pid in pids {
+        if !Path::new(&format!("/proc/{pid}")).exists() {
+            db.execute("DELETE FROM logins WHERE pid = ?1", params![pid])?;
+        }
+    }
+    Ok(())
+}
+
 /// Passes between two copies of fail2ban's bans, about half a minute.
 const PASSES_PER_BAN_IMPORT: u32 = 30;
 
-/// Runs for the life of the helper: reads the event log every second and
-/// copies fail2ban's new bans every PASSES_PER_BAN_IMPORT passes. A failed
-/// pass is logged, and the store is opened again after a pause; a failed
-/// ban copy is logged and tried again at the next turn.
+/// Runs for the life of the helper: reads the event log every second, and
+/// every PASSES_PER_BAN_IMPORT passes copies fail2ban's new bans and forgets
+/// the logins of ended processes. A failed pass is logged, and the store is
+/// opened again after a pause; a failed ban copy or forgetting is logged and
+/// tried again at the next turn.
 pub fn collect() {
     loop {
         match open() {
@@ -93,10 +124,13 @@ pub fn collect() {
                         log(&format!("history: {e:#}"));
                         break;
                     }
-                    if passes % PASSES_PER_BAN_IMPORT == 0
-                        && let Err(e) = import_bans(&mut db)
-                    {
-                        log(&format!("history: fail2ban's bans: {e:#}"));
+                    if passes % PASSES_PER_BAN_IMPORT == 0 {
+                        if let Err(e) = import_bans(&mut db) {
+                            log(&format!("history: fail2ban's bans: {e:#}"));
+                        }
+                        if let Err(e) = forget_ended_logins(&db) {
+                            log(&format!("history: logins: {e:#}"));
+                        }
                     }
                     passes = passes.wrapping_add(1);
                     std::thread::sleep(Duration::from_secs(1));
@@ -514,7 +548,14 @@ fn record_line(tx: &Transaction, line: &str) -> Result<()> {
             )?;
             (h.account.clone(), h.address.clone())
         }
-        Kind::LoginOk | Kind::LoginFailed | Kind::SessionClosed => (h.account.clone(), h.address.clone()),
+        Kind::LoginOk => {
+            tx.execute(
+                "INSERT OR REPLACE INTO logins (pid, time, account, address) VALUES (?1, ?2, ?3, ?4)",
+                params![pid, time, h.account, h.address],
+            )?;
+            (h.account.clone(), h.address.clone())
+        }
+        Kind::LoginFailed | Kind::SessionClosed => (h.account.clone(), h.address.clone()),
         _ => {
             let known: Option<(String, String)> = tx
                 .query_row("SELECT account, address FROM sessions WHERE pid = ?1", params![pid], |row| {
@@ -545,4 +586,53 @@ fn insert(tx: &Transaction, time: i64, door: &str, h: &events::Happening, accoun
         params![time, door, h.kind.name(), account, address, h.path, h.other, int(h.bytes, "bytes")?, h.actor],
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn store() -> Connection {
+        let db = Connection::open_in_memory().expect("an in-memory store");
+        db.execute_batch(SCHEMA).expect("the history tables");
+        db
+    }
+
+    #[test]
+    fn keeps_where_each_session_logged_in_from() {
+        let mut db = store();
+        let tx = db.transaction().expect("a transaction");
+        for line in [
+            "2026-11-26T01:00:00.123456+01:00 sftp sshd-session[42]: Accepted password for alice from 203.0.113.24 port 51234 ssh2",
+            "2026-11-26T01:00:05.000000+01:00 sftp sshd-session[43]: Failed password for bob from 198.51.100.9 port 4242 ssh2",
+        ] {
+            record_line(&tx, line).expect("the line");
+        }
+        tx.commit().expect("the commit");
+        let time: i64 = db.query_row("SELECT time FROM logins WHERE pid = 42", [], |row| row.get(0)).expect("the login");
+        let time = u64::try_from(time).expect("a time after 1970");
+        assert_eq!(login_address(&db, 42, time).expect("a lookup"), "203.0.113.24");
+        assert_eq!(login_address(&db, 42, time + 1).expect("a lookup"), "203.0.113.24");
+        assert_eq!(login_address(&db, 42, time + 2).expect("a lookup"), "", "a later process with the same id");
+        assert_eq!(login_address(&db, 43, time).expect("a lookup"), "", "a failed login opens no session");
+    }
+
+    #[test]
+    fn forgets_the_logins_of_ended_processes() {
+        let db = store();
+        let alive = std::process::id();
+        for pid in [alive, 999_999_999] {
+            db.execute("INSERT INTO logins (pid, time, account, address) VALUES (?1, 0, 'a', '192.0.2.1')", params![pid])
+                .expect("a login");
+        }
+        forget_ended_logins(&db).expect("the forgetting");
+        let left: Vec<i64> = db
+            .prepare("SELECT pid FROM logins")
+            .expect("a query")
+            .query_map([], |row| row.get(0))
+            .expect("the rows")
+            .collect::<rusqlite::Result<_>>()
+            .expect("the ids");
+        assert_eq!(left, vec![i64::from(alive)]);
+    }
 }

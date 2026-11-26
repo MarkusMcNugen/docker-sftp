@@ -3,7 +3,24 @@ title: How To Fix A Failure
 weight: 12
 ---
 
-Each entry starts with the text you see, in `docker logs` or in your SFTP client.
+Each entry starts with the text you see, in the log or in your SFTP client.
+
+## Where to read the messages
+
+{{< tabs >}}
+{{< tab name="Web UI" selected=true >}}
+While the server runs, the admin web UI's **Logs** page shows the container's log as it is written, and filters it. The **Services** card on the **Status** page says whether sshd, fail2ban and rsyslog are running.
+
+![The Logs page](/screenshots/logs.png)
+
+When the container stops at start, the web UI stops with it, so read the log from the command line.
+{{< /tab >}}
+{{< tab name="Command line" >}}
+```bash
+docker logs sftp
+```
+{{< /tab >}}
+{{< /tabs >}}
 
 ## The container stops at start
 
