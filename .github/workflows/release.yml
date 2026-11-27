@@ -186,3 +186,33 @@ jobs:
           cache-from: |
             type=gha,scope=linux-amd64
             type=gha,scope=linux-arm64
+
+  dockerhub:
+    # Docker Hub's overview is the published tag's README, and its
+    # description the line below, capped there at 100 characters.
+    needs: [resolve, publish]
+    runs-on: ubuntu-24.04
+    environment: DockerHub
+    permissions:
+      contents: read
+    env:
+      DOCKERHUB_README_TOKEN: ${{ secrets.DOCKERHUB_README_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+      - name: Set the Docker Hub description and overview
+        if: env.DOCKERHUB_README_TOKEN != ''
+        env:
+          DESCRIPTION: A hardened OpenSSH SFTP server with an optional admin web UI and file browser, in one container
+        run: |
+          set -euo pipefail
+          # The token reaches curl on stdin and the session token in a file,
+          # so neither is on a command line.
+          jq -n '{username: "markusmcnugen", password: env.DOCKERHUB_README_TOKEN}' |
+            curl -fsS -H 'Content-Type: application/json' --data @- https://hub.docker.com/v2/users/login |
+            jq -r '"Authorization: JWT " + .token' >"$RUNNER_TEMP/dockerhub-auth"
+          jq -n --rawfile overview README.md '{description: env.DESCRIPTION, full_description: $overview}' |
+            curl -fsS -X PATCH -H @"$RUNNER_TEMP/dockerhub-auth" -H 'Content-Type: application/json' --data @- \
+              https://hub.docker.com/v2/repositories/markusmcnugen/sftp/ >/dev/null
+          echo "Docker Hub description and overview set from README.md at ${{ needs.resolve.outputs.tag }}"
