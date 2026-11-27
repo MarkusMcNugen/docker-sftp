@@ -15,13 +15,17 @@ The template fills in:
 | Network type | Bridge |
 | SFTP port | host port `2222` to container port `22`; Unraid's own SSH server listens on 22 |
 | Admin web UI port | `8443` |
-| File browser port | `8444`, used once the file browser is on |
+| File browser port | `8444` |
 | Path `/config` | `/mnt/user/appdata/sftp` |
 | Extra Parameters | `--cap-add=NET_ADMIN --cap-add=NET_RAW` |
 | Admin web UI | `true` |
-| File browser | `false` |
+| File browser | `true` |
 
 Without the extra parameters, fail2ban detects attacks but never blocks them, and the log says so at start. Unraid passes its time zone to the container by itself.
+
+**Show more settings** holds the rest: **Trusted networks**, **Trusted proxies**, **Plain HTTP** and **fail2ban**. Behind a reverse proxy such as Nginx Proxy Manager or SWAG, set **Trusted proxies** to the proxy's address and **Plain HTTP** to `true` ([Behind a reverse proxy](../use-the-web-ui/#behind-a-reverse-proxy)).
+
+A container installed from an earlier template keeps the values it was saved with. To turn the file browser on there, choose **Edit** in the container's menu, set **File browser** to `true`, and add the **File browser port** if it is missing: **Add another Path, Port, Variable, Label or Device**, type **Port**, container port and host port both `8444`.
 
 ## Sign in to the admin web UI
 
@@ -30,6 +34,12 @@ The container's menu on the **Docker** tab has **WebUI**, which opens `https://<
 On first start the log, the container's log icon, prints a setup link for the first admin that works once, for one hour. Open it, choose a name and a password, and you are signed in ([How To Use The Admin Web UI](../use-the-web-ui/)).
 
 Change the server's settings on the web UI's **Settings** page rather than adding variables to the template. Unraid passes every variable in the template, empty ones too, and a variable set in the environment wins over the Settings page, so an added variable locks that setting even when it is empty.
+
+## The file browser
+
+The file browser is on at `https://<server>:8444/`, for accounts given web access. An admin makes each one a sign-in link on its page in the web UI; the account holder opens it, sets a web password and a second factor, and then works with their files in a browser ([How To Use The File Browser](../use-the-file-browser/#let-an-account-in)). Set **File browser** to `false` in the template to turn it off.
+
+![The file browser: the folder tree, the files and the details of the chosen one](/screenshots/files-details.png)
 
 ## Accounts
 
