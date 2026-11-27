@@ -15,7 +15,12 @@
 
 Each account is jailed in its home directory, fail2ban bans password guessers, and one `/config` volume holds everything, applied again on every start.
 
-<a href="https://markusmcnugen.github.io/docker-sftp/docs/how-to/use-the-web-ui/"><img src="https://raw.githubusercontent.com/MarkusMcNugen/docker-sftp/main/.github/dashboard.png" alt="The admin web UI's Status page: accounts, sessions, bans, sign-in and transfer charts, and who is connected"/></a>
+<a href="https://markusmcnugen.github.io/docker-sftp/docs/how-to/use-the-web-ui/">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/MarkusMcNugen/docker-sftp/main/.github/dashboard-dark.png">
+<img src="https://raw.githubusercontent.com/MarkusMcNugen/docker-sftp/main/.github/dashboard.png" alt="The admin web UI's Status page: accounts, sessions, bans, sign-in and transfer charts, and who is connected">
+</picture>
+</a>
 
 </div>
 
