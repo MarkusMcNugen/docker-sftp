@@ -42,7 +42,11 @@ params:
 
   navbar:
     displayTitle: true
-    displayLogo: false
+    displayLogo: true
+    logo:
+      path: images/logo.svg
+      width: 28
+      height: 28
 
   page:
     width: wide
