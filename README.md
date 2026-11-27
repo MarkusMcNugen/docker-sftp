@@ -4,7 +4,7 @@
 
 # SFTP
 
-**A hardened OpenSSH SFTP server with chroot jails and fail2ban, in one container.**
+**A hardened OpenSSH SFTP server in one container, with an optional admin web UI and file browser behind two-factor sign-in.**
 
 [![Release](https://img.shields.io/github/actions/workflow/status/MarkusMcNugen/docker-sftp/release.yml?label=release&style=flat-square)](https://github.com/MarkusMcNugen/docker-sftp/actions/workflows/release.yml)
 [![Docker pulls](https://img.shields.io/docker/pulls/markusmcnugen/sftp?style=flat-square)](https://hub.docker.com/r/markusmcnugen/sftp)
@@ -54,25 +54,14 @@ Each account is jailed in its home directory, fail2ban bans password guessers, a
 <details open>
 <summary><b>What you get</b></summary>
 
-- Debian 13 with OpenSSH 10 and fail2ban 1.1, rebuilt every week for security updates.
-- [SFTP only](https://markusmcnugen.github.io/docker-sftp/docs/explanation/security-model/): no shells, no forwarding, each account jailed in `/home/<name>`.
-- Post-quantum hybrid key exchange first; SHA-1, CBC, MD5 and 64-bit MACs refused.
-- [fail2ban bans](https://markusmcnugen.github.io/docker-sftp/docs/how-to/tune-fail2ban/) that double for repeat offenders and survive restarts.
-- [Accounts](https://markusmcnugen.github.io/docker-sftp/docs/how-to/add-users/) from a file, an environment variable, a Docker secret or the command line, with plain or [hashed passwords](https://markusmcnugen.github.io/docker-sftp/docs/how-to/use-hashed-passwords/).
-- Every start and every apply reconciles accounts: a changed password, a removed user or a revoked key takes effect at once.
-- [Public keys](https://markusmcnugen.github.io/docker-sftp/docs/how-to/use-public-keys/) installed root-owned outside the jail, where users cannot add their own.
-- [rsync over SSH](https://markusmcnugen.github.io/docker-sftp/docs/how-to/allow-rsync/) for chosen accounts, inside their jails.
-- [Permissions per account](https://markusmcnugen.github.io/docker-sftp/docs/how-to/set-account-permissions/): read-only, upload-only or a custom set, plus disabled, expiry dates, allowed networks and a umask.
-- An optional [admin web UI](https://markusmcnugen.github.io/docker-sftp/docs/how-to/use-the-web-ui/) behind argon2id passwords and TOTP codes, with named admins, read-only roles and an audit log.
-- An optional [file browser](https://markusmcnugen.github.io/docker-sftp/docs/how-to/use-the-file-browser/) on its own port, behind a web password and two-factor, that works through SFTP with each account's own permissions: uploads of any size, previews, zip downloads, search and single-use share links.
-- [Groups](https://markusmcnugen.github.io/docker-sftp/docs/how-to/group-accounts/) that give their members defaults, and managers who open other accounts' files.
-- [Country rules](https://markusmcnugen.github.io/docker-sftp/docs/how-to/block-countries/) that drop connections from chosen countries, with DB-IP Lite in the image or MaxMind GeoLite2 with a free key.
-- A permanent history of sign-ins, file operations and bans, shown live on the web UI's Activity page.
-- [Changes apply live](https://markusmcnugen.github.io/docker-sftp/docs/how-to/apply-changes-live/), without a restart and without dropping open sessions.
-- An optional [log of every file operation](https://markusmcnugen.github.io/docker-sftp/docs/how-to/log-transfers/).
-- A configuration mistake stops the container with one line naming it.
-- Exits when any service dies, stops in under a second, and reports its health.
-- [Runs with ten capabilities](https://markusmcnugen.github.io/docker-sftp/docs/how-to/harden-the-container/) and `no-new-privileges`; images for amd64 and arm64.
+- [SFTP only](https://markusmcnugen.github.io/docker-sftp/docs/explanation/security-model/), each account jailed in its home folder, with no shells and no forwarding.
+- [fail2ban](https://markusmcnugen.github.io/docker-sftp/docs/how-to/tune-fail2ban/) bans password guessers, repeat offenders for longer, and [country rules](https://markusmcnugen.github.io/docker-sftp/docs/how-to/block-countries/) drop whole countries.
+- [Sign-ins from unusual places wait for approval](https://markusmcnugen.github.io/docker-sftp/docs/how-to/hold-unusual-sign-ins/), and a password spray locks an account to its own networks.
+- An optional [admin web UI](https://markusmcnugen.github.io/docker-sftp/docs/how-to/use-the-web-ui/) for accounts, keys, bans and settings, behind argon2id passwords, two-factor codes and an audit log.
+- An optional [file browser](https://markusmcnugen.github.io/docker-sftp/docs/how-to/use-the-file-browser/) where account holders work with their files, behind a web password and two-factor, with their own permissions.
+- [Accounts](https://markusmcnugen.github.io/docker-sftp/docs/how-to/add-users/) from a file, an environment variable or a Docker secret, with [permissions](https://markusmcnugen.github.io/docker-sftp/docs/how-to/set-account-permissions/), [groups](https://markusmcnugen.github.io/docker-sftp/docs/how-to/group-accounts/) and [rsync](https://markusmcnugen.github.io/docker-sftp/docs/how-to/allow-rsync/) per account.
+- [Changes apply live](https://markusmcnugen.github.io/docker-sftp/docs/how-to/apply-changes-live/), without a restart or dropped sessions.
+- Debian 13 and OpenSSH 10 with post-quantum key exchange, rebuilt every week; [ten capabilities](https://markusmcnugen.github.io/docker-sftp/docs/how-to/harden-the-container/) and `no-new-privileges`; amd64 and arm64.
 
 </details>
 

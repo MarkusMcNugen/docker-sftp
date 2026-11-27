@@ -31,7 +31,7 @@ A container installed from an earlier template keeps the values it was saved wit
 
 The container's menu on the **Docker** tab has **WebUI**, which opens `https://<server>:8443/`. The certificate is self-signed, so the browser warns once; the log prints its SHA-256 fingerprint to compare.
 
-On first start the log, the container's log icon, prints a setup link for the first admin that works once, for one hour. Open it, choose a name and a password, and you are signed in ([How To Use The Admin Web UI](../use-the-web-ui/)).
+The server starts with no account yet, so every SFTP sign-in fails until you add one. On first start the log, the container's log icon, prints a setup link for the first admin that works once, for one hour. Open it, choose a name and a password, and you are signed in ([How To Use The Admin Web UI](../use-the-web-ui/)).
 
 Change the server's settings on the web UI's **Settings** page rather than adding variables to the template. Unraid passes every variable in the template, empty ones too, and a variable set in the environment wins over the Settings page, so an added variable locks that setting even when it is empty.
 
@@ -48,7 +48,7 @@ The file browser is on at `https://<server>:8444/`, for accounts given web acces
 Open **Accounts** and choose **New account** ([How To Add And Change Users](../add-users/)).
 {{< /tab >}}
 {{< tab name="Command line" >}}
-Create `/mnt/user/appdata/sftp/sshd/users.conf` over SMB or from the terminal. If the container started before the file existed, it wrote a commented template there and stopped; edit it and start the container again.
+Edit `/mnt/user/appdata/sftp/sshd/users.conf` over SMB or from the terminal, where the first start wrote a commented template, then run `docker exec sftp entrypoint apply`. With **Admin web UI** set to `false`, the container starts only once the file holds an account.
 {{< /tab >}}
 {{< /tabs >}}
 

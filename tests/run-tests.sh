@@ -846,6 +846,22 @@ scenario_webui() {
     fi
     engine rm -f "$SERVER" >/dev/null
 
+    # With the web UI on, the first admin makes the accounts, so a server
+    # with none starts.
+    SERVER=$RUN_ID-webui-empty
+    mkdir -p "$WORK/webui-empty"
+    start_server "$SERVER" "$WORK/webui-empty" -e WEBUI_ENABLED=true || die "web UI server with no account did not start"
+    if wait_healthy "$SERVER"; then
+        capture engine logs "$SERVER"
+        expect "with the web UI on, a server with no account starts and prints the setup link" \
+            eval 'has "setup?token=" && has "no account yet"'
+        capture in_server entrypoint apply
+        expect "apply succeeds with no account while the web UI is on" eval '((RC == 0)) && has "applied"'
+    else
+        fail "with the web UI on, a server with no account starts" "$(server_log_tail)"
+    fi
+    engine rm -f "$SERVER" >/dev/null
+
     reject "refuses plain HTTP without trusted proxies" "needs WEBUI_TRUSTED_PROXIES" wes:pw \
         -e WEBUI_ENABLED=true -e WEBUI_PLAIN_HTTP=true
 

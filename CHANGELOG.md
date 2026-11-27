@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.1
+
+- With the admin web UI on, the container starts with no account yet, so a fresh install, such as one from the Unraid template, comes up for its first admin to add accounts in the browser. Every SFTP sign-in fails until then, and the log and the Status page say so. Without the web UI, a server with no account still stops at start.
+- The README and the docs open with the optional admin web UI and file browser, the README's features list is shorter, and Your First Server shows the web UI and the command line side by side.
+
 ## 2.3.0
 
 ### Sign-in check

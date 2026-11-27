@@ -1953,7 +1953,10 @@ apply_main() {
     if [[ -s $SAVED_ARGS ]]; then mapfile -d '' -t args <"$SAVED_ARGS"; fi
     restore_image_configs
     collect_specs "${args[@]}"
-    ((${#SPECS[@]})) || die "no users configured; with no account the container would not start again"
+    if ((${#SPECS[@]} == 0)); then
+        is_true "$WEBUI_ENABLED" || die "no users configured; with no account the container would not start again"
+        warn "no account yet, so every SFTP sign-in fails; add one on the web UI's Accounts page"
+    fi
     configure
     write_state
     request_reload "$pid"
@@ -1978,8 +1981,12 @@ main() {
     collect_specs "$@"
     if ((${#SPECS[@]} == 0)); then
         write_users_template
-        log "fatal: no users configured. Add them to $USERS_CONF, SFTP_USERS or the command line." >&2
-        exit 3
+        # With the web UI on, its first admin makes the accounts.
+        if ! is_true "$WEBUI_ENABLED"; then
+            log "fatal: no users configured. Add them to $USERS_CONF, SFTP_USERS or the command line." >&2
+            exit 3
+        fi
+        warn "no account yet, so every SFTP sign-in fails; add one on the web UI's Accounts page"
     fi
     configure
     setup_webui

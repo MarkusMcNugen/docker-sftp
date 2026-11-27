@@ -3,7 +3,7 @@ title: Your First Server
 weight: 1
 ---
 
-This tutorial starts a server with two accounts, logs in with a password and with a key, and shares a folder from the host. It takes a machine with Docker and an OpenSSH client (`sftp`), which Linux, macOS and Windows 10 or later include.
+This tutorial starts a server, adds two accounts, logs in with a password and with a key, shares a folder from the host, opens it in the file browser, and watches fail2ban ban an address. Each step that changes the server shows the admin web UI and the command line side by side; follow either. It takes a machine with Docker, an OpenSSH client (`sftp`), which Linux, macOS and Windows 10 or later include, and a browser.
 
 ## 1. Make the folders
 
@@ -16,66 +16,121 @@ sudo chown 1001:100 ~/sftp/alice
 
 ## 2. Describe the accounts
 
+{{< tabs >}}
+{{< tab name="Web UI" selected=true >}}
+Nothing to write yet: you make both accounts in the browser once the server runs, in step 5. With the web UI on, a server with no account starts and waits for its first admin.
+{{< /tab >}}
+{{< tab name="Command line" >}}
+Describe them in `users.conf`, and give Bob your public key. If you have no key yet, make one with `ssh-keygen -t ed25519`.
+
 ```bash
 cat > ~/sftp/config/sshd/users.conf <<'EOF'
-alice:changeme:1001:100
+alice:changeme:1001:100::web
 bob::1002:100:inbox,outbox
 EOF
-```
-
-Alice logs in with the password `changeme`. Bob has no password, so he needs a key. Each line's format is in [users.conf](../../reference/users-conf/).
-
-## 3. Give Bob a key
-
-If you have no key yet, make one with `ssh-keygen -t ed25519`. Copy the public half into the config:
-
-```bash
 cp ~/.ssh/id_ed25519.pub ~/sftp/config/userkeys/bob.pub
 ```
 
-## 4. Start the server
+Alice logs in with the password `changeme`, and `web` lets her use the file browser. Bob has no password, so he needs the key. Each line's format is in [users.conf](../../reference/users-conf/).
+{{< /tab >}}
+{{< /tabs >}}
+
+## 3. Start the server
 
 ```bash
 docker run -d --name sftp --restart unless-stopped \
   --cap-add NET_ADMIN --cap-add NET_RAW \
-  -p 2222:22 \
+  -p 2222:22 -p 8443:8443 -p 8444:8444 \
+  -e WEBUI_ENABLED=true -e WEBUI_FILES_ENABLED=true \
   -v ~/sftp/config:/config \
   -v ~/sftp/alice:/home/alice/upload \
   markusmcnugen/sftp
 ```
 
-`NET_ADMIN` and `NET_RAW` let fail2ban block attackers. Port 2222 on the host reaches the server's port 22.
+`NET_ADMIN` and `NET_RAW` let fail2ban block attackers. Port 2222 on the host reaches the server's port 22, 8443 is the admin web UI and 8444 the file browser. Both are optional: without the two `-e` options and their ports, the server runs from `/config` alone, and then it needs an account in `users.conf` before it starts.
 
-## 5. Read the start-up log
+## 4. Read the start-up log
 
 ```bash
 docker logs sftp
 ```
 
-The first lines come from the entrypoint, and each line starts with a timestamp:
+These are the entrypoint's and the web UI's lines, each after a timestamp; sshd, fail2ban and rsyslog add their own start-up lines between them.
 
+{{< tabs >}}
+{{< tab name="Web UI" selected=true >}}
+```text
+entrypoint: warning: no account yet, so every SFTP sign-in fails; add one on the web UI's Accounts page
+entrypoint: generating ed25519 host key in /config/sshd/keys
+entrypoint: host key: 256 SHA256:pkapETEQT/VvGQW7iF80mh7UbiL23bBzPWKopZ3hQOc sftp-host-key (ED25519)
+entrypoint: generating rsa host key in /config/sshd/keys
+entrypoint: host key: 4096 SHA256:GqX6BpjgFeO1c9S7I0Py4gApLQ8dl1nOuld0LCkew4c sftp-host-key (RSA)
+entrypoint: generating the file browser's certificate authority in /config/sshd/keys
+entrypoint: accounts configured: 0
+entrypoint: sshd will listen on port(s): 22
+entrypoint: file browser sshd: loopback port 2299, for no account yet
+entrypoint: fail2ban bans with iptables (nft backend)
+entrypoint: file browser started on port 8444
+entrypoint: web UI started on port 8443
+entrypoint: server started
+sftp-webui: generated a self-signed certificate in /config/webui/tls
+sftp-webui: TLS certificate SHA-256 fingerprint 2B:C3:63:16:19:1A:71:48:5B:24:DC:7E:E2:59:3E:54:4A:3B:89:85:BA:B5:F7:77:81:72:F7:41:57:E5:91:4F
+sftp-webui: no admin exists yet; within one hour, open https://<this server>:8443/setup?token=7WQ2tR6WZwlqCOCDuB9XFtTH2mF_oY5w3XjTRxd4IOc to create one
+```
+{{< /tab >}}
+{{< tab name="Command line" >}}
 ```text
 entrypoint: generating ed25519 host key in /config/sshd/keys
-entrypoint: host key: 256 SHA256:SApi6R5LEGS+C7kXOvZDx+ialFRtBJ2m6/fWYeQjStw sftp-host-key (ED25519)
+entrypoint: host key: 256 SHA256:mZhro+dmvOr0+7w8HVZ7HZLfay5NCcCtzNTYz3MJWRU sftp-host-key (ED25519)
 entrypoint: generating rsa host key in /config/sshd/keys
-entrypoint: host key: 4096 SHA256:OFZ+iwhAOgZtZlhbKVPZvz1hRdz5TN/qjPqjWqbvPy8 sftp-host-key (RSA)
+entrypoint: host key: 4096 SHA256:KZMzqEoKOQjbxdQScoqBpPrDeNwZ638MzPlZEP5nKJg sftp-host-key (RSA)
+entrypoint: generating the file browser's certificate authority in /config/sshd/keys
 entrypoint: user alice: created (uid 1001, gid 100)
 entrypoint: user bob: created (uid 1002, gid 100)
 entrypoint: user bob: created /home/bob/inbox
 entrypoint: user bob: created /home/bob/outbox
-entrypoint: user bob: key 256 SHA256:clPGMcqh2mCTz/Rr1jUsIybSZEclxWMUja/uFZqurJM bob@laptop (ED25519)
+entrypoint: user bob: key 256 SHA256:6nD8EqFX6lw8f14ydWJtnRVHiPdWcFIVMqSRhvH/q8Y bob@laptop (ED25519)
 entrypoint: accounts configured: 2
 entrypoint: sshd will listen on port(s): 22
+entrypoint: file browser sshd: loopback port 2299, for alice
 entrypoint: fail2ban bans with iptables (nft backend)
-rsyslogd: [origin software="rsyslogd" swVersion="8.2504.0" x-pid="97" x-info="https://www.rsyslog.com"] start
+entrypoint: file browser started on port 8444
+entrypoint: web UI started on port 8443
 entrypoint: server started
-sshd[105]: Server listening on 0.0.0.0 port 22.
-sshd[105]: Server listening on :: port 22.
+sftp-webui: no admin exists yet; within one hour, open https://<this server>:8443/setup?token=qrKUemxFtzdUq7EyyM4k0As2fOE_Skf66Skf2fMv5YQ to create one
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+Note the `ED25519` host key fingerprint, which your SFTP client shows you in step 6, and the setup link, which works once, for one hour. Your fingerprints and link differ, because they were just made for this server.
+
+## 5. Sign in and make the accounts
+
+Find the setup link in the log, open it with `<this server>` replaced by the machine's address, and choose a name and a password for the first admin. Your browser warns once about the self-signed certificate; the log prints its fingerprint to compare.
+
+```bash
+docker logs sftp 2>&1 | grep setup
 ```
 
-fail2ban's start-up lines follow, ending with `Jail 'sshd' started`.
+![Creating the first admin from the setup link](/screenshots/setup.png)
 
-Note the `ED25519` host key fingerprint. Your fingerprints differ, because the keys were just made for this server.
+{{< tabs >}}
+{{< tab name="Web UI" selected=true >}}
+Open **Accounts** and choose **New account**:
+
+- **Name** `alice`, **Set a new password** `changeme`, **User ID** `1001`, **Full access**, and **File browser** on. Choose **Create account**.
+- **Name** `bob`, **No password**, **User ID** `1002`, and `inbox` and `outbox` under **Writable directories**, one per line. Choose **Create account**, then paste your public key into **Add keys** on Bob's **Public keys** card. If you have no key yet, make one with `ssh-keygen -t ed25519` and paste `~/.ssh/id_ed25519.pub`.
+
+![The New account page](/screenshots/account-new.png)
+
+![The Public keys card of an account](/screenshots/account-keys.png)
+{{< /tab >}}
+{{< tab name="Command line" >}}
+`users.conf` made both accounts when the server started; **Accounts** lists them. To change them later, edit the file and run `docker exec sftp entrypoint apply`, which changes the server without a restart.
+{{< /tab >}}
+{{< /tabs >}}
+
+The **Status** page shows who is connected and the sign-ins and transfers of the last day.
 
 ## 6. Log in with a password
 
@@ -112,44 +167,37 @@ inbox   outbox
 
 `inbox` and `outbox` live inside the container; mount host folders there to keep their files when the container is re-created.
 
-## 8. Watch fail2ban
+## 8. Open Alice's files in the browser
 
-Try `sftp -P 2222 alice@localhost` with a wrong password a few times from another machine, then:
+The file browser lets an account holder work with their files in a browser, through SFTP with the account's own permissions. On Alice's page in the web UI, choose **Make a sign-in link** in the **File browser** card; the link works once. Opened by Alice, it sets her web password, of at least 12 characters, and a second factor in an authenticator app. She then signs in at `https://<this server>:8444/` and finds `notes.txt` in `upload`.
 
+![Setting up a file browser sign-in from the link](/screenshots/files-invite-alice.png)
+
+![The file browser](/screenshots/files-details.png)
+
+## 9. Watch fail2ban
+
+Try `sftp -P 2222 alice@localhost` with a wrong password a few times from another machine. After five failures within ten minutes, the address is banned and its connections are refused for an hour.
+
+{{< tabs >}}
+{{< tab name="Web UI" selected=true >}}
+The **Bans** page lists the address, where it was banned from and how long the ban lasts. Lift it with the button at the end of its row.
+
+![The Bans page](/screenshots/bans.png)
+{{< /tab >}}
+{{< tab name="Command line" >}}
 ```bash
 docker exec sftp fail2ban-client status sshd
 ```
 
-After five failures within ten minutes, the address appears under `Banned IP list` and its connections are refused for an hour. Lift a ban with `docker exec sftp fail2ban-client set sshd unbanip <address>`.
-
-## 9. Open the admin web UI
-
-Everything above can also be done in a browser. Recreate the container with the admin web UI on and its port published, keeping the same `/config`:
-
-```bash
-docker rm -f sftp
-docker run -d --name sftp --restart unless-stopped \
-  --cap-add NET_ADMIN --cap-add NET_RAW \
-  -p 2222:22 -p 8443:8443 \
-  -e WEBUI_ENABLED=true \
-  -v ~/sftp/config:/config \
-  -v ~/sftp/alice:/home/alice/upload \
-  markusmcnugen/sftp
-```
-
-Find the setup link in the log and open it, with `<this server>` replaced by the machine's address. Your browser warns once about the self-signed certificate. Choose a name and a password for the first admin:
-
-```bash
-docker logs sftp 2>&1 | grep setup
-```
-
-The **Status** page shows who is connected and the sign-ins and transfers of the last day. Alice and Bob are under **Accounts**, and the address you just got banned is under **Bans**, where you can lift it.
-
-![The Status page](/screenshots/status.png)
+The address appears under `Banned IP list`. Lift the ban with `docker exec sftp fail2ban-client set sshd unbanip <address>`.
+{{< /tab >}}
+{{< /tabs >}}
 
 ## Next
 
 - Learn the admin web UI's pages: [How To Use The Admin Web UI](../../how-to/use-the-web-ui/).
+- Let more people into the file browser: [How To Use The File Browser](../../how-to/use-the-file-browser/).
 - Hash Alice's password instead of storing it in plain text: [How To Use Hashed Passwords](../../how-to/use-hashed-passwords/).
-- See every file operation in the log: [How To Log Transfers](../../how-to/log-transfers/).
+- Hold sign-ins from places an account has not used: [How To Hold Unusual Sign-ins](../../how-to/hold-unusual-sign-ins/).
 - Run it with the fewest privileges: [How To Harden The Container](../../how-to/harden-the-container/).
