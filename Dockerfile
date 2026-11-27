@@ -107,16 +107,17 @@ COPY --from=geo /out/dbip-country-lite.mmdb /usr/local/share/sftp/geo/dbip-count
 # The pristine copies under /usr/local/share/sftp are what the entrypoint
 # restores on each start. The build fails if rsyslog or fail2ban reject
 # the shipped configuration.
-RUN chmod 0755 / /etc /etc/ssh /etc/fail2ban /etc/fail2ban/fail2ban.d /etc/fail2ban/filter.d /etc/fail2ban/jail.d \
+RUN chmod 0755 / /etc /etc/ssh /etc/pam.d /etc/fail2ban /etc/fail2ban/fail2ban.d /etc/fail2ban/filter.d /etc/fail2ban/jail.d \
         /usr /usr/local /usr/local/bin /usr/local/lib /usr/local/lib/sftp /usr/local/libexec /usr/local/libexec/sftp \
- && chmod 0644 /etc/ssh/sshd_config /etc/rsyslog.conf \
+ && chmod 0644 /etc/ssh/sshd_config /etc/pam.d/sshd /etc/rsyslog.conf \
         /etc/fail2ban/jail.d/00-sftp.conf /etc/fail2ban/fail2ban.d/00-sftp.conf \
         /etc/fail2ban/filter.d/sftp-webui.conf \
         /usr/local/lib/sftp/legacy-defaults.sha256 \
  && chmod 0755 /usr/local/bin/entrypoint /usr/local/bin/healthcheck \
-        /usr/local/libexec/sftp/rsync-gate \
+        /usr/local/libexec/sftp/rsync-gate /usr/local/libexec/sftp/signin-excused \
  && install -d -m 0755 /usr/local/share/sftp \
  && cp /etc/ssh/sshd_config /usr/local/share/sftp/sshd_config \
+ && cp /etc/pam.d/sshd /usr/local/share/sftp/pam-sshd \
  && cp -a /etc/fail2ban /usr/local/share/sftp/fail2ban \
  && ln -s /usr/local/bin/entrypoint /entrypoint \
  && rsyslogd -N1 -f /etc/rsyslog.conf \

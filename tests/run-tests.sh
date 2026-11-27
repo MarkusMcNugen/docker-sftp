@@ -29,7 +29,7 @@ CLIENT=$RUN_ID-client
 ATTACKER=$RUN_ID-attacker
 WORK=$(mktemp -d)
 FIXTURES=$PWD/tests/fixtures
-ALL_SCENARIOS=(main crash hardened port options rotation rsync perms groups countries browser apply webui legacy reject)
+ALL_SCENARIOS=(main crash hardened port options rotation rsync perms groups countries browser apply webui signins legacy reject)
 PASSED=0
 FAILED=0
 SKIPPED=0
@@ -203,6 +203,54 @@ rsyslog_confined_by_host() {
     local labels
     labels=$(in_server sh -c 'cat /proc/1/attr/current; for p in /proc/[0-9]*; do [ "$(cat $p/comm)" = rsyslogd ] && cat $p/attr/current; done' 2>/dev/null)
     [[ $(sort -u <<<"$labels" | wc -l) -gt 1 ]]
+}
+
+# far_network: the TEST-NET-2 network, made by the first scenario to need it.
+far_network() {
+    engine network inspect "$FARNET" >/dev/null 2>&1 ||
+        engine network create --subnet 198.51.100.0/24 "$FARNET" >/dev/null
+}
+
+# seed_profile <account> <address>: five sign-ins over eight days from the
+# address in the server's history, enough for holds to start at the default
+# thresholds.
+seed_profile() {
+    in_server python3 -c 'import sqlite3, sys, time
+db = sqlite3.connect("/config/webui/history.sqlite3")
+now = int(time.time())
+for days in (8, 6, 4, 2, 1):
+    db.execute("INSERT INTO events (time, door, kind, account, address, path, other, bytes) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
+               (now - days * 86400, "ssh", "login_ok", sys.argv[1], sys.argv[2], "", "password"))
+db.commit()' "$1" "$2"
+}
+
+# failed_total <jail>: the failures fail2ban has counted in the jail.
+failed_total() {
+    in_server fail2ban-client status "$1" | sed -n 's/.*Total failed:[[:space:]]*//p'
+}
+
+# signins_of <kind> <account> <address>: the sign-ins of that kind, such as
+# login_failed or login_held, the server's history holds for the account
+# from the address.
+signins_of() {
+    in_server python3 -c 'import sqlite3, sys
+db = sqlite3.connect("/config/webui/history.sqlite3")
+print(db.execute("SELECT COUNT(*) FROM events WHERE kind = ? AND account = ? AND address = ?",
+                 (sys.argv[1], sys.argv[2], sys.argv[3])).fetchone()[0])' "$1" "$2" "$3"
+}
+
+# expect_count <check> <want> <command...>: waits up to 10 s for the command
+# to print a number of at least <want>, then checks that it printed <want>
+# exactly, so a count that went past it fails.
+expect_count() {
+    local name=$1 want=$2 _
+    shift 2
+    for _ in $(seq 20); do
+        OUT=$("$@" 2>&1)
+        [[ $OUT =~ ^[0-9]+$ ]] && ((OUT >= want)) && break
+        sleep 0.5
+    done
+    expect "$name" [ "$OUT" = "$want" ]
 }
 
 # ---------------------------------------------------------------------------
@@ -643,7 +691,7 @@ scenario_countries() {
     capture in_server nft list set inet sftp_countries a_listed4_0
     expect "the listed countries' networks are loaded" has "elements = {"
 
-    engine network create --subnet 198.51.100.0/24 "$FARNET" >/dev/null || die "cannot create network $FARNET"
+    far_network || die "cannot create network $FARNET"
     engine network connect --ip "$server_far_ip" "$FARNET" "$SERVER" || die "cannot attach $SERVER to $FARNET"
     engine run -d --name "$far" --network "$FARNET" --ip "$far_ip" -v "$WORK/client:/client:ro" "$IMAGE" \
         sleep infinity >/dev/null || die "cannot start the far client"
@@ -785,7 +833,7 @@ web() {
 }
 
 scenario_webui() {
-    local cfg=$WORK/webui/config token
+    local cfg=$WORK/webui/config token before
     mkdir -p "$WORK/webui-off" "$cfg/sshd"
     SERVER=$RUN_ID-webui-off
     start_server "$SERVER" "$WORK/webui-off" -e "SFTP_USERS=wes:wes-pw" || die "web UI off server did not start"
@@ -839,6 +887,16 @@ scenario_webui() {
     web "$CLIENT" files fuller full
     web "$CLIENT" grant-manage webby fuller
     web "$CLIENT" manager webby fuller
+    # A profile from the client's network, then a file browser sign-in from
+    # TEST-NET-2 through the proxy: a place the profile lacks.
+    seed_profile webby "$CLIENT_IP" || die "cannot seed the sign-in history of webby"
+    before=$(failed_total sftp-webui)
+    web "$CLIENT" files-held webby 198.51.100.7
+    expect_count "fail2ban counts the wrong file browser password and not the held sign-in" $((before + 1)) \
+        failed_total sftp-webui
+    expect_count "the history records the wrong file browser password as the only failure" 1 \
+        signins_of login_failed webby 198.51.100.7
+    expect_count "the history records the held file browser sign-in as held" 1 signins_of login_held webby 198.51.100.7
     capture in_server grep -c ':\$y\$' /config/sshd/users.conf
     expect "the UI stores both accounts' passwords as yescrypt hashes" [ "$OUT" = 2 ]
     web "$CLIENT" settings
@@ -864,6 +922,83 @@ scenario_webui() {
     expect "failed web logins are banned by fail2ban" $banned
     capture in_server sh -c 'stat -c "%U %a" /config/webui/admins.json; stat -c "%U %a" /config/audit/webui.log'
     expect "the admin store belongs to the web UI and the audit log to root" eval 'has "sftp-webui 600" && has "root 600"'
+}
+
+# ---------------------------------------------------------------------------
+# The sign-in check sshd runs through PAM: a sign-in from a place the
+# account's profile lacks is held until an admin approves it and never
+# counts as a failure, and a password spray locks an account to its own
+# networks until an admin lifts the lockdown.
+# ---------------------------------------------------------------------------
+scenario_signins() {
+    SERVER=$RUN_ID-signins
+    local cfg=$WORK/signins/config far=$RUN_ID-signins-far far2=$RUN_ID-signins-far2 token near_ip key before
+    local server_far_ip=198.51.100.30 far_ip=198.51.100.40 far2_ip=198.51.100.41
+    mkdir -p "$cfg/sshd"
+    printf '%s\n' "sig:sig-pw:1601::up" "spray:spray-pw:1602::up" >"$cfg/sshd/users.conf"
+    start_server "$SERVER" "$cfg" -e WEBUI_ENABLED=true || die "sign-in server did not start"
+    if ! wait_healthy "$SERVER"; then
+        fail "sign-in server becomes healthy" "$(server_log_tail)"
+        return
+    fi
+    trust_host "$SERVER" "$cfg"
+    near_ip=$SERVER_IP
+    token=$(engine logs "$SERVER" 2>&1 | grep -o 'setup?token=[A-Za-z0-9_-]*' | tail -1 | cut -d= -f2)
+    web "$CLIENT" setup "$token" boss "boss-password-123"
+
+    # Two clients on TEST-NET-2, which is in no country and no private range.
+    far_network || die "cannot create network $FARNET"
+    engine network connect --ip "$server_far_ip" "$FARNET" "$SERVER" || die "cannot attach $SERVER to $FARNET"
+    engine run -d --name "$far" --network "$FARNET" --ip "$far_ip" -v "$WORK/client:/client:ro" "$IMAGE" \
+        sleep infinity >/dev/null || die "cannot start $far"
+    engine run -d --name "$far2" --network "$FARNET" --ip "$far2_ip" -v "$WORK/client:/client:ro" "$IMAGE" \
+        sleep infinity >/dev/null || die "cannot start $far2"
+    key=$(cat "$cfg/sshd/keys/ssh_host_ed25519_key.pub") || die "no host key in $cfg"
+    printf '%s %s\n' "$server_far_ip" "$key" >>"$WORK/client/known_hosts"
+
+    seed_profile sig "$CLIENT_IP" || die "cannot seed the sign-in history of sig"
+    capture sftp_password "$CLIENT" sig sig-pw "pwd"
+    expect "a profiled account signs in from its own network" eval '((RC == 0))'
+    before=$(failed_total sshd)
+    SERVER_IP=$server_far_ip
+    capture sftp_password "$far" sig sig-pw "pwd"
+    expect "a sign-in from a new place is held, with the right password" eval '((RC != 0))'
+    # Banners show at LogLevel INFO, which SSH_OPTS lowers to ERROR.
+    capture sftp_password "$far" sig sig-pw "pwd" -o LogLevel=INFO
+    expect "a retry from there is held again, and the client is told why" \
+        eval '((RC != 0)) && has "held until an admin approves it"'
+    capture sftp_password "$far" sig wrong-pw "pwd"
+    expect_count "fail2ban counts the wrong password from there and not the held sign-ins" $((before + 1)) failed_total sshd
+    expect_count "the history records the wrong password as the only failure from there" 1 \
+        signins_of login_failed sig "$far_ip"
+    expect_count "the history records both held sign-ins as held" 2 signins_of login_held sig "$far_ip"
+    SERVER_IP=$near_ip
+    web "$CLIENT" held sig "$far_ip"
+    SERVER_IP=$server_far_ip
+    capture sftp_password "$far" sig sig-pw "pwd"
+    expect "a sign-in from an approved place goes through" eval '((RC == 0))'
+
+    # One failed sign-in each from three addresses on two networks.
+    SERVER_IP=$near_ip
+    capture sftp_password "$CLIENT" spray spray-pw "pwd"
+    expect "an account with no profile yet signs in" eval '((RC == 0))'
+    capture sftp_password "$ATTACKER" spray wrong-1 "pwd"
+    SERVER_IP=$server_far_ip
+    capture sftp_password "$far" spray wrong-2 "pwd"
+    capture sftp_password "$far2" spray wrong-3 "pwd"
+    SERVER_IP=$near_ip
+    web "$CLIENT" locked spray
+    SERVER_IP=$server_far_ip
+    capture sftp_password "$far" spray spray-pw "pwd"
+    expect "during a spray the right password from another network is refused" eval '((RC != 0))'
+    expect_count "the history records that sign-in as refused, not failed" 1 signins_of login_refused spray "$far_ip"
+    SERVER_IP=$near_ip
+    capture sftp_password "$CLIENT" spray spray-pw "pwd"
+    expect "during a spray the account still signs in from its own network" eval '((RC == 0))'
+    web "$CLIENT" lift spray
+    SERVER_IP=$server_far_ip
+    capture sftp_password "$far" spray spray-pw "pwd"
+    expect "once the lockdown is lifted the account signs in from elsewhere again" eval '((RC == 0))'
 }
 
 # ---------------------------------------------------------------------------

@@ -4,11 +4,13 @@
 //! the password and second-factor checks both make.
 
 pub mod auth;
+pub mod distance;
 pub mod events;
 pub mod geo;
 pub mod net;
 pub mod proto;
 pub mod spec;
+pub mod signin;
 pub mod sshkey;
 pub mod tar;
 pub mod timefmt;

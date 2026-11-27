@@ -1,0 +1,10 @@
+#!/bin/sh
+# fail2ban's ignorecommand for the sshd jail, given the address of a failed
+# sign-in. A sign-in the sign-in check holds or refuses reaches the auth log
+# as a failed password, and leaves one token for its address. Exits 0, so
+# fail2ban skips the failure, when it removes such a token, and 1 when there
+# is none, so fail2ban counts it.
+for token in /run/sftp/signin-excused/"$1"_*; do
+    rm -- "$token" 2>/dev/null && exit 0
+done
+exit 1

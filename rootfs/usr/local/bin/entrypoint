@@ -73,10 +73,14 @@ readonly ENV_KEYS=(FAIL2BAN_ENABLED SFTP_PORT SFTP_LOG_TRANSFERS SFTP_UMASK SFTP
     SFTP_AUTH_LOG_MAX_BYTES SFTP_USERS SFTP_USERS_FILE SFTP_RSYNC_USERS TZ WEBUI_ENABLED WEBUI_PORT
     WEBUI_PLAIN_HTTP WEBUI_TRUSTED_PROXIES WEBUI_TRUSTED_NETWORKS WEBUI_ADMIN_FILE
     SFTP_COUNTRY_RULE SFTP_COUNTRIES MAXMIND_ACCOUNT_ID MAXMIND_LICENSE_KEY WEBUI_FILES_ENABLED WEBUI_FILES_PORT
-    FILES_SHARE FILES_SHARE_DAYS FILES_SHARE_MAX_DAYS FILES_SHARE_PASSWORD)
+    FILES_SHARE FILES_SHARE_DAYS FILES_SHARE_MAX_DAYS FILES_SHARE_PASSWORD
+    SIGNIN_LEARN_SIGNINS SIGNIN_LEARN_DAYS SIGNIN_TRAVEL_KMH SIGNIN_SPRAY_ADDRESSES SIGNIN_SPRAY_MINUTES
+    SIGNIN_LOCKDOWN_HOURS)
 # Settings settings.conf may hold. A value from the environment wins.
 readonly SETTING_KEYS=(SFTP_PORT SFTP_LOG_TRANSFERS SFTP_UMASK SFTP_CRYPTO_POLICY SFTP_AUTH_LOG_MAX_BYTES
-    SFTP_COUNTRY_RULE SFTP_COUNTRIES FILES_SHARE FILES_SHARE_DAYS FILES_SHARE_MAX_DAYS FILES_SHARE_PASSWORD)
+    SFTP_COUNTRY_RULE SFTP_COUNTRIES FILES_SHARE FILES_SHARE_DAYS FILES_SHARE_MAX_DAYS FILES_SHARE_PASSWORD
+    SIGNIN_LEARN_SIGNINS SIGNIN_LEARN_DAYS SIGNIN_TRAVEL_KMH SIGNIN_SPRAY_ADDRESSES SIGNIN_SPRAY_MINUTES
+    SIGNIN_LOCKDOWN_HOURS)
 
 # Account permissions, in canonical order, and the presets users.conf names.
 readonly PERMS_ALL=(list download upload delete rename mkdir attributes links)
@@ -120,6 +124,7 @@ declare -A RSYNC_OK    # accounts whose jail holds rsync
 OPT_PERMS="" OPT_PERMS_SET="" OPT_RSYNC="" OPT_WEB="" OPT_DISABLED="" OPT_EXPIRES="" OPT_FROM="" OPT_UMASK=""
 OPT_GROUPS="" OPT_MANAGE="" OPT_NOSHARE="" OPT_SHAREDAYS="" OPT_SHAREPASSWORD="" PERMS_OUT=""
 SSHD_OPTS=()        # -o options derived from the environment
+DENIED=()           # accounts refused before authentication: disabled, or past their expiry date
 SSHD_LEGACY=false   # true when /config/sshd/sshd_config replaces ours
 LOG_SOCKETS=()      # per-chroot syslog sockets rsyslog is asked to create
 PIDS=()
@@ -249,6 +254,7 @@ apply_defaults() {
 # ---------------------------------------------------------------------------
 restore_image_configs() {
     cp -f "$DIST/sshd_config" /etc/ssh/sshd_config
+    install -m 644 -o root -g root -- "$DIST/pam-sshd" /etc/pam.d/sshd
     rm -rf /etc/ssh/sshd_config.d /etc/fail2ban /etc/rsyslog.d
     install -d -m 755 /etc/ssh/sshd_config.d /etc/rsyslog.d /run/sshd
     if [[ $MODE == start ]]; then
@@ -785,7 +791,10 @@ apply_account() {
     elif [[ -n ${U_EXPIRES[$name]} ]]; then
         info "user $name: logins refused from ${U_EXPIRES[$name]} (UTC)"
     fi
-    if account_locked "$name"; then end_sessions "$name"; fi
+    if account_locked "$name"; then
+        end_sessions "$name"
+        DENIED+=("$name")
+    fi
 
     local pass=${U_PASS[$name]}
     if [[ -z $pass ]]; then
@@ -918,6 +927,11 @@ setup_users() {
         apply_keys "$name"
     done
     prune_authorized_keys
+    # With PAM on, sshd leaves the expiry date to pam_unix, which refuses
+    # only after authentication by closing the connection; DenyUsers refuses
+    # these accounts before it, with permission denied. pam_unix still
+    # refuses an account whose date passes while the server runs.
+    if ((${#DENIED[@]})); then SSHD_OPTS+=(-o "DenyUsers=${DENIED[*]}"); fi
     info "accounts configured: ${#USERS[@]}"
 }
 
@@ -1119,6 +1133,9 @@ setup_sshd() {
             SSHD_LEGACY=true
             install -m 644 -o root -g root -- "$custom" /etc/ssh/sshd_config
             warn "$custom replaces the whole built-in sshd configuration, so its hardening and sshd_config.d drop-ins do not apply"
+            if is_true "$WEBUI_ENABLED"; then
+                warn "with $custom the sign-in check does not run for SFTP sign-ins; it still checks file browser sign-ins"
+            fi
         fi
     fi
     if ! $SSHD_LEGACY; then
@@ -1131,6 +1148,13 @@ setup_sshd() {
             install -m 644 -o root -g root -- "$f" /etc/ssh/sshd_config.d/
             info "sshd drop-in: $f"
         done
+        # The sign-in check reads each account's sign-in history, which the
+        # web UI's helper keeps; it holds sign-ins from unusual places and
+        # locks an account down during a password spray. stdout shows the
+        # client why a sign-in was stopped.
+        if is_true "$WEBUI_ENABLED"; then
+            printf 'account  required pam_exec.so quiet stdout %s signin-check\n' "$HELPER_BIN" >>/etc/pam.d/sshd
+        fi
     fi
     if $SSHD_LEGACY && ! grep -qiE '^[[:space:]]*AuthorizedKeysFile' /etc/ssh/sshd_config; then
         SSHD_OPTS+=(-o "AuthorizedKeysFile=$AUTH_KEYS_DIR/%u .ssh/authorized_keys")

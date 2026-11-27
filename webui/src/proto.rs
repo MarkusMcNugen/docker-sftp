@@ -87,6 +87,13 @@ pub enum Request {
     Bans,
     Ban { actor: Actor, address: String },
     Unban { actor: Actor, jail: String, address: String },
+    /// Held sign-ins waiting for an admin, and the accounts locked down.
+    Signins,
+    /// Approves a held sign-in, which adds its place to the account's
+    /// profile, or rejects it, banning its address when `ban` is true.
+    HoldDecide { actor: Actor, id: i64, approve: bool, ban: bool },
+    /// Ends an account's lockdown now.
+    LockdownLift { actor: Actor, account: String },
     Fail2banPut { actor: Actor, rules: BanRules },
     Log { query: String, before: Option<u64> },
     AuditLog { query: String, before: Option<u64> },
@@ -286,6 +293,8 @@ impl Request {
             | Request::Ban { actor, .. }
             | Request::Unban { actor, .. }
             | Request::Fail2banPut { actor, .. }
+            | Request::HoldDecide { actor, .. }
+            | Request::LockdownLift { actor, .. }
             | Request::Audit { actor, .. }
             | Request::GroupPut { actor, .. }
             | Request::GroupDelete { actor, .. }
@@ -306,6 +315,7 @@ impl Request {
             | Request::People { .. }
             | Request::NamesTried { .. }
             | Request::LoginsByCountry { .. }
+            | Request::Signins
             | Request::FilesLogins => None,
         }
     }
@@ -572,6 +582,33 @@ pub struct BanView {
     pub count: u32,
     /// The failed logins behind the ban; 0 for a ban an admin made.
     pub failures: Option<u32>,
+}
+
+/// A sign-in held for an admin's approval.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct HoldView {
+    pub id: i64,
+    pub time: u64,
+    pub account: String,
+    pub address: String,
+    /// A country code, or local network or unknown.
+    pub place: String,
+    pub reason: String,
+}
+
+/// An account locked to the networks of its approved sign-ins by a password
+/// spray.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct LockdownView {
+    pub account: String,
+    pub since: u64,
+    pub last_failure: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Signins {
+    pub holds: Vec<HoldView>,
+    pub lockdowns: Vec<LockdownView>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

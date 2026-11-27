@@ -44,6 +44,12 @@ pub fn record(line: &str) -> Option<Record<'_>> {
 pub enum Kind {
     LoginOk,
     LoginFailed,
+    /// The right password or key, held by the sign-in check for an admin's
+    /// approval.
+    LoginHeld,
+    /// The right password or key, refused by the sign-in check: the account
+    /// is locked down, or the check could not run.
+    LoginRefused,
     SessionOpened,
     SessionClosed,
     Browse,
@@ -66,6 +72,8 @@ impl Kind {
         match self {
             Kind::LoginOk => "login_ok",
             Kind::LoginFailed => "login_failed",
+            Kind::LoginHeld => "login_held",
+            Kind::LoginRefused => "login_refused",
             Kind::SessionOpened => "session_opened",
             Kind::SessionClosed => "session_closed",
             Kind::Browse => "browse",

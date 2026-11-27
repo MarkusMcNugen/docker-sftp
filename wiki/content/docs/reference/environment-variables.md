@@ -29,11 +29,17 @@ Every variable the container reads. All are optional. A value the image does not
 | `FILES_SHARE_DAYS` | `7` | 1 to 999999999 | The share link length the share dialog chooses first |
 | `FILES_SHARE_MAX_DAYS` | `30` | 1 to 999999999 | The longest a share link may last, in days |
 | `FILES_SHARE_PASSWORD` | `false` | as `SFTP_LOG_TRANSFERS` | Every share link needs a password |
+| `SIGNIN_LEARN_SIGNINS` | `5` | 1 to 999999999 | Sign-ins an account needs before the sign-in check holds any ([How To Hold Unusual Sign-ins](../../how-to/hold-unusual-sign-ins/)) |
+| `SIGNIN_LEARN_DAYS` | `7` | 1 to 999999999 | Days from an account's first sign-in before the check holds any |
+| `SIGNIN_TRAVEL_KMH` | `750` | 1 to 999999999 | The speed, in km/h, above which a sign-in from another country counts as impossible travel |
+| `SIGNIN_SPRAY_ADDRESSES` | `3` | 1 to 999999999 | Addresses whose failed sign-ins to one account, within `SIGNIN_SPRAY_MINUTES`, lock it down |
+| `SIGNIN_SPRAY_MINUTES` | `60` | 1 to 999999999 | The window for `SIGNIN_SPRAY_ADDRESSES`, in minutes |
+| `SIGNIN_LOCKDOWN_HOURS` | `24` | 1 to 999999999 | A lockdown ends once no sign-in to the account has failed for this many hours |
 | `SFTP_COUNTRY_RULE` | `off` | `off`, `block`, `allow` | Drops new connections from the listed countries (`block`) or from every other one (`allow`) ([How To Block Countries](../../how-to/block-countries/)) |
 | `SFTP_COUNTRIES` | `CN IN BR RU VN` | two-letter country codes, separated by spaces or commas | The countries the rule lists; `allow` needs at least one |
 | `MAXMIND_ACCOUNT_ID` | empty | a MaxMind account ID; set both or neither | With `MAXMIND_LICENSE_KEY`, MaxMind GeoLite2 replaces DB-IP Lite as the country database |
 | `MAXMIND_LICENSE_KEY` | empty | a MaxMind license key | See `MAXMIND_ACCOUNT_ID` |
 
-`SFTP_PORT`, `SFTP_LOG_TRANSFERS`, `SFTP_UMASK`, `SFTP_CRYPTO_POLICY`, `SFTP_AUTH_LOG_MAX_BYTES`, `SFTP_COUNTRY_RULE`, `SFTP_COUNTRIES` and the four `FILES_SHARE` settings can also be set in `/config/sshd/settings.conf`, which the web UI writes; a variable set in the environment wins ([How To Apply Changes Without A Restart](../../how-to/apply-changes-live/#settings-in-config)).
+`SFTP_PORT`, `SFTP_LOG_TRANSFERS`, `SFTP_UMASK`, `SFTP_CRYPTO_POLICY`, `SFTP_AUTH_LOG_MAX_BYTES`, `SFTP_COUNTRY_RULE`, `SFTP_COUNTRIES`, the four `FILES_SHARE` settings and the six `SIGNIN` settings can also be set in `/config/sshd/settings.conf`, which the web UI writes; a variable set in the environment wins ([How To Apply Changes Without A Restart](../../how-to/apply-changes-live/#settings-in-config)).
 
 `SFTP_PORT`, `SFTP_LOG_TRANSFERS`, `SFTP_UMASK` and `SFTP_CRYPTO_POLICY` reach sshd as command-line options, which take precedence over the sshd configuration files ([How To Change sshd Settings](../../how-to/change-sshd-settings/#settings-the-environment-controls)).

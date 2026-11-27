@@ -597,6 +597,12 @@ struct StatusPage {
     ranges: Vec<RangeChoice>,
     charts: Vec<ChartCard>,
     history_error: Option<String>,
+    /// Sign-ins waiting for an admin's approval.
+    held: usize,
+    /// Accounts locked to their trusted networks by a password spray.
+    locked: usize,
+    /// Why those two could not be counted, if they could not.
+    signins_error: Option<String>,
 }
 
 /// A time range a chart page offers.
@@ -693,6 +699,10 @@ pub async fn status_page(State(app): AppState, Extension(ctx): Extension<Ctx>, Q
         Ok(c) => (c, None),
         Err(e) => (Vec::new(), Some(format!("{e:#}"))),
     };
+    let (held, locked, signins_error) = match helper::data::<sftp_webui::proto::Signins>(&Request::Signins).await {
+        Ok(s) => (s.holds.len(), s.lockdowns.len(), None),
+        Err(e) => (0, 0, Some(format!("{e:#}"))),
+    };
     match helper::data::<Status>(&Request::Status).await {
         Ok(s) => {
             let page = StatusPage {
@@ -702,6 +712,9 @@ pub async fn status_page(State(app): AppState, Extension(ctx): Extension<Ctx>, Q
                 ranges,
                 charts,
                 history_error,
+                held,
+                locked,
+                signins_error,
                 s,
             };
             app::render(StatusCode::OK, &page)
@@ -1938,10 +1951,68 @@ fn drift(b: &Bans) -> Option<String> {
     ))
 }
 
+/// A sign-in held for approval, as the Bans page lists it.
+pub struct HoldRow {
+    pub id: i64,
+    pub account: String,
+    pub address: String,
+    /// The ISO code when the place is a country, for its flag; else empty.
+    pub country: String,
+    /// The country code, Local network, File browser or Unknown.
+    pub place: String,
+    pub reason: String,
+    pub when: String,
+    pub when_iso: String,
+}
+
+/// A locked-down account, as the Bans page lists it.
+pub struct LockRow {
+    pub account: String,
+    pub since: String,
+    pub since_iso: String,
+    pub last: String,
+    pub last_iso: String,
+}
+
+fn hold_row(h: sftp_webui::proto::HoldView) -> HoldRow {
+    let (country, place) = match h.place.as_str() {
+        "local network" => (String::new(), "Local network".to_string()),
+        "file browser" => (String::new(), "File browser".to_string()),
+        "unknown" => (String::new(), "Unknown".to_string()),
+        _ => (h.place.clone(), h.place),
+    };
+    HoldRow {
+        id: h.id,
+        account: h.account,
+        address: h.address,
+        country,
+        place,
+        reason: h.reason,
+        when: ago(h.time),
+        when_iso: timefmt::iso(h.time),
+    }
+}
+
+fn lock_row(l: sftp_webui::proto::LockdownView) -> LockRow {
+    LockRow {
+        account: l.account,
+        since: ago(l.since),
+        since_iso: timefmt::iso(l.since),
+        last: ago(l.last_failure),
+        last_iso: timefmt::iso(l.last_failure),
+    }
+}
+
 #[derive(Template)]
 #[template(path = "bans.html")]
 struct BansPage {
     l: Layout,
+    /// Sign-ins held for approval, newest first.
+    holds: Vec<HoldRow>,
+    /// Accounts locked to their trusted networks by a password spray.
+    lockdowns: Vec<LockRow>,
+    /// Why the held sign-ins and lockdowns could not be read, if they could not.
+    signins_error: Option<String>,
     enabled: bool,
     rows: Vec<BanRow>,
     banned_ssh: usize,
@@ -2163,8 +2234,15 @@ pub async fn bans_page(State(app): AppState, Extension(ctx): Extension<Ctx>, Que
         }));
     }
     rows.sort_by_key(|r| std::cmp::Reverse(r.since_sort));
+    let (holds, lockdowns, signins_error) = match helper::data::<sftp_webui::proto::Signins>(&Request::Signins).await {
+        Ok(s) => (s.holds.into_iter().map(hold_row).collect(), s.lockdowns.into_iter().map(lock_row).collect(), None),
+        Err(e) => (Vec::new(), Vec::new(), Some(format!("{e:#}"))),
+    };
     let page = BansPage {
         l: layout(&app, Some(&ctx), "Bans", "bans"),
+        holds,
+        lockdowns,
+        signins_error,
         enabled: b.enabled,
         banned_ssh: rows.iter().filter(|r| r.door == "ssh").count(),
         banned_web: rows.iter().filter(|r| r.door == "web").count(),
@@ -2386,6 +2464,44 @@ pub async fn unban(
     change(&app, &ctx, request, "Address unbanned.", "/bans").await
 }
 
+#[derive(Deserialize)]
+pub struct HoldForm {
+    id: i64,
+    /// approve, reject, or ban to reject and ban the address.
+    action: String,
+}
+
+pub async fn hold_decide(
+    State(app): AppState,
+    Extension(ctx): Extension<Ctx>,
+    Extension(client): Extension<Client>,
+    Form(form): Form<HoldForm>,
+) -> Response {
+    let (approve, ban, done) = match form.action.as_str() {
+        "approve" => (true, false, "Sign-in approved."),
+        "reject" => (false, false, "Sign-in rejected."),
+        "ban" => (false, true, "Sign-in rejected and its address banned."),
+        other => return (StatusCode::BAD_REQUEST, format!("unknown action {other}")).into_response(),
+    };
+    let request = Request::HoldDecide { actor: app::actor(&ctx, client), id: form.id, approve, ban };
+    change(&app, &ctx, request, done, "/bans").await
+}
+
+#[derive(Deserialize)]
+pub struct LiftForm {
+    account: String,
+}
+
+pub async fn lockdown_lift(
+    State(app): AppState,
+    Extension(ctx): Extension<Ctx>,
+    Extension(client): Extension<Client>,
+    Form(form): Form<LiftForm>,
+) -> Response {
+    let request = Request::LockdownLift { actor: app::actor(&ctx, client), account: form.account };
+    change(&app, &ctx, request, "Lockdown lifted.", "/bans").await
+}
+
 /// Lifts every ban picked in the table; each value is "<jail> <address>".
 pub async fn lift(
     State(app): AppState,
@@ -2570,6 +2686,8 @@ fn kind_label(kind: &str) -> (&'static str, &'static str) {
     match kind {
         "login_ok" => ("Signed in", "sign-in"),
         "login_failed" => ("Failed sign-in", "x-circle"),
+        "login_held" => ("Sign-in held for approval", "hourglass-medium"),
+        "login_refused" => ("Sign-in refused", "lock-simple"),
         "session_opened" => ("Session started", "plugs-connected"),
         "session_closed" => ("Session ended", "sign-out"),
         "browse" => ("Browsed", "folder-open"),

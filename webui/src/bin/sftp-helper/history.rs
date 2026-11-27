@@ -45,6 +45,19 @@ CREATE INDEX IF NOT EXISTS events_by_account ON events (account, time);
 CREATE TABLE IF NOT EXISTS position (source TEXT PRIMARY KEY, inode INTEGER NOT NULL, offset INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS sessions (pid INTEGER PRIMARY KEY, account TEXT NOT NULL, address TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS logins (pid INTEGER PRIMARY KEY, time INTEGER NOT NULL, account TEXT NOT NULL, address TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS holds (
+    id INTEGER PRIMARY KEY,
+    time INTEGER NOT NULL,
+    account TEXT NOT NULL,
+    address TEXT NOT NULL,
+    place TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    state TEXT NOT NULL DEFAULT 'pending',
+    decided INTEGER
+);
+CREATE INDEX IF NOT EXISTS holds_by_account ON holds (account, state);
+CREATE UNIQUE INDEX IF NOT EXISTS holds_pending ON holds (account, address) WHERE state = 'pending';
+CREATE TABLE IF NOT EXISTS lifts (account TEXT PRIMARY KEY, time INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS bans (
     jail TEXT NOT NULL,
     address TEXT NOT NULL,
@@ -104,6 +117,69 @@ fn forget_ended_logins(db: &Connection) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// A time the store keeps as a signed integer, as the unsigned seconds the
+/// rest of the code uses.
+fn unsigned(value: i64, what: &str) -> Result<u64> {
+    u64::try_from(value).with_context(|| format!("{what} {value} is negative"))
+}
+
+fn times_and_addresses(db: &Connection, sql: &str, values: impl rusqlite::Params) -> Result<Vec<(u64, String)>> {
+    let mut statement = db.prepare(sql)?;
+    let rows = statement.query_map(values, |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (time, address) = row?;
+        out.push((unsigned(time, "time")?, address));
+    }
+    Ok(out)
+}
+
+/// An account's approved sign-ins, oldest first, as time and address: its
+/// successful sign-ins over SFTP and the file browser, and its held sign-ins
+/// an admin approved.
+pub fn approved_signins(db: &Connection, account: &str) -> Result<Vec<(u64, String)>> {
+    times_and_addresses(
+        db,
+        "SELECT time, address FROM events WHERE account = ?1 AND kind = 'login_ok' AND address != '' \
+         UNION ALL SELECT time, address FROM holds WHERE account = ?1 AND state = 'approved' ORDER BY 1",
+        params![account],
+    )
+    .context("cannot read the account's sign-ins")
+}
+
+/// An account's failed sign-ins from `since` on, oldest first.
+pub fn failed_signins(db: &Connection, account: &str, since: u64) -> Result<Vec<(u64, String)>> {
+    times_and_addresses(
+        db,
+        "SELECT time, address FROM events \
+         WHERE account = ?1 AND kind = 'login_failed' AND address != '' AND time >= ?2 ORDER BY time",
+        params![account, int(since, "time")?],
+    )
+    .context("cannot read the account's failed sign-ins")
+}
+
+/// When an admin last lifted the account's lockdown, if ever.
+pub fn lifted(db: &Connection, account: &str) -> Result<Option<u64>> {
+    let time: Option<i64> = db
+        .query_row("SELECT time FROM lifts WHERE account = ?1", params![account], |row| row.get(0))
+        .optional()
+        .context("cannot read the account's lockdown lifts")?;
+    time.map(|t| unsigned(t, "lift time")).transpose()
+}
+
+/// Records a sign-in held for an admin's approval, and returns its id. A
+/// retry from the same address while that hold is pending refreshes it.
+pub fn record_hold(db: &Connection, time: u64, account: &str, address: &str, place: &str, reason: &str) -> Result<i64> {
+    db.query_row(
+        "INSERT INTO holds (time, account, address, place, reason) VALUES (?1, ?2, ?3, ?4, ?5) \
+         ON CONFLICT (account, address) WHERE state = 'pending' \
+         DO UPDATE SET time = excluded.time, place = excluded.place, reason = excluded.reason RETURNING id",
+        params![int(time, "time")?, account, address, place, reason],
+        |r| r.get(0),
+    )
+    .context("cannot record a held sign-in")
 }
 
 /// Passes between two copies of fail2ban's bans, about half a minute.
@@ -540,6 +616,19 @@ fn record_line(tx: &Transaction, line: &str) -> Result<()> {
     }
     let Some(h) = events::happening(r.program, r.message) else { return Ok(()) };
     let pid = int(r.pid, "pid")?;
+    let h = match h.kind {
+        Kind::LoginFailed => {
+            match crate::signin_check::excused(std::path::Path::new(crate::signin_check::NOTES), r.pid, &h.account, &h.address) {
+                Ok(Some(kind)) => events::Happening { kind, ..h },
+                Ok(None) => h,
+                Err(e) => {
+                    crate::system::log(&format!("history: {e:#}"));
+                    h
+                }
+            }
+        }
+        _ => h,
+    };
     let (account, address) = match h.kind {
         Kind::SessionOpened => {
             tx.execute(
@@ -555,7 +644,7 @@ fn record_line(tx: &Transaction, line: &str) -> Result<()> {
             )?;
             (h.account.clone(), h.address.clone())
         }
-        Kind::LoginFailed | Kind::SessionClosed => (h.account.clone(), h.address.clone()),
+        Kind::LoginFailed | Kind::LoginHeld | Kind::LoginRefused | Kind::SessionClosed => (h.account.clone(), h.address.clone()),
         _ => {
             let known: Option<(String, String)> = tx
                 .query_row("SELECT account, address FROM sessions WHERE pid = ?1", params![pid], |row| {
@@ -615,6 +704,45 @@ mod tests {
         assert_eq!(login_address(&db, 42, time + 1).expect("a lookup"), "203.0.113.24");
         assert_eq!(login_address(&db, 42, time + 2).expect("a lookup"), "", "a later process with the same id");
         assert_eq!(login_address(&db, 43, time).expect("a lookup"), "", "a failed login opens no session");
+    }
+
+    #[test]
+    fn reads_an_accounts_sign_ins_holds_and_lifts() {
+        let db = store();
+        for (time, kind, account, address) in [
+            (10, "login_ok", "alice", "203.0.113.24"),
+            (20, "login_failed", "alice", "192.0.2.1"),
+            (30, "login_ok", "bob", "198.51.100.42"),
+            (40, "login_failed", "alice", "192.0.2.2"),
+            (50, "login_ok", "alice", ""),
+        ] {
+            db.execute(
+                "INSERT INTO events (time, door, kind, account, address, path, other, bytes) VALUES (?1, 'ssh', ?2, ?3, ?4, '', '', 0)",
+                params![time, kind, account, address],
+            )
+            .expect("an event");
+        }
+        let approved = record_hold(&db, 60, "alice", "198.51.100.9", "RU", "New place").expect("a hold");
+        db.execute("UPDATE holds SET state = 'approved' WHERE id = ?1", params![approved]).expect("an approval");
+        let pending = record_hold(&db, 70, "alice", "198.51.100.10", "RU", "New place").expect("a pending hold");
+        let retried = record_hold(&db, 75, "alice", "198.51.100.10", "RU", "New place").expect("a retry");
+        assert_eq!(retried, pending, "a retry from the same address refreshes the pending hold");
+        let again = record_hold(&db, 76, "alice", "198.51.100.9", "RU", "New place").expect("a hold after an approval");
+        assert_ne!(again, approved, "a decided hold is never reopened");
+        let times: Vec<i64> = db
+            .prepare("SELECT time FROM holds WHERE state = 'pending' ORDER BY time")
+            .expect("a query")
+            .query_map([], |r| r.get(0))
+            .expect("the holds")
+            .collect::<rusqlite::Result<_>>()
+            .expect("the times");
+        assert_eq!(times, vec![75, 76]);
+        let signins = approved_signins(&db, "alice").expect("the sign-ins");
+        assert_eq!(signins, vec![(10, "203.0.113.24".to_string()), (60, "198.51.100.9".to_string())]);
+        assert_eq!(failed_signins(&db, "alice", 25).expect("the failures"), vec![(40, "192.0.2.2".to_string())]);
+        assert_eq!(lifted(&db, "alice").expect("no lift"), None);
+        db.execute("INSERT INTO lifts (account, time) VALUES ('alice', 80)", []).expect("a lift");
+        assert_eq!(lifted(&db, "alice").expect("the lift"), Some(80));
     }
 
     #[test]

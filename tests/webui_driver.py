@@ -471,18 +471,27 @@ def step_grant_manage(manager, target):
     check(f"an admin lets {manager} manage {target}", status == 303, f"{status} {alerts(made)}")
 
 
-def step_manager(manager, target):
-    me = load(f"files-{manager}")
-    # A code works once and only for a step after the last one used, within
-    # a step of now; wait, under a minute, until such a step is in reach.
+def files_sign_in(name, headers=None):
+    """Signs `name` in to the file browser with the password and second
+    factor step_files set, sending `headers`; returns the session, the
+    status and the page. A code works once and only for a step after the
+    last one used, within a step of now, so this waits, under a minute,
+    until such a step is in reach, and keeps the step it used."""
+    me = load(f"files-{name}")
     while int(time.time()) // 30 + 1 <= me["step"]:
         time.sleep(1)
-    step = max(me["step"] + 1, int(time.time()) // 30)
+    me["step"] = max(me["step"] + 1, int(time.time()) // 30)
+    save(f"files-{name}", me)
     user = {"cookies": {}}
-    _, _, page = request(user, "GET", "/login", host=FILES_HOST)
-    form = {"login_token": hidden(page, "login_token"), "name": manager, "password": me["password"],
-            "code": totp(me["secret"], step * 30)}
-    status, _, _ = request(user, "POST", "/login", form, host=FILES_HOST)
+    _, _, page = request(user, "GET", "/login", headers=headers, host=FILES_HOST)
+    form = {"login_token": hidden(page, "login_token"), "name": name, "password": me["password"],
+            "code": totp(me["secret"], me["step"] * 30)}
+    status, _, page = request(user, "POST", "/login", form, headers=headers, host=FILES_HOST)
+    return user, status, page
+
+
+def step_manager(manager, target):
+    user, status, _ = files_sign_in(manager)
     _, _, page = request(user, "GET", "/", host=FILES_HOST)
     check(f"{manager} sees {target} among the accounts it manages", status == 303 and f'href="/m/{target}/"' in page, f"{status}")
     status, _, page = request(user, "GET", f"/m/{target}/?path=/up", host=FILES_HOST)
@@ -666,6 +675,82 @@ def step_lockout(name):
     check("five failed logins lock the address out", statuses[:5] == [401] * 5 and statuses[5] == 429, str(statuses))
 
 
+def held_rows(page, account, address):
+    """The Bans page's rows for held sign-ins of `account` from `address`."""
+    return [row for row in page.split("</tr>")
+            if f'<code class="name">{account}</code>' in row and f"<code>{address}</code>" in row]
+
+
+def locked_rows(page, account):
+    """The Bans page's rows for `account` locked down."""
+    return [row for row in page.split("</tr>")
+            if 'data-label="Last failed sign-in"' in row and f'<code class="name">{account}</code>' in row]
+
+
+def step_held(account, address):
+    """The held sign-in of `account` from `address`: listed once however
+    often it was tried, counted on the Status page, and approved."""
+    st = load("admin")
+    status, _, text = request(st, "GET", "/bans")
+    rows = held_rows(text, account, address)
+    check(f"the Bans page lists the held sign-in of {account} from {address} once",
+          status == 200 and len(rows) == 1, f"{status}, {len(rows)} rows {alerts(text)}")
+    status, _, page = request(st, "GET", "/")
+    check("the Status page says a sign-in is waiting for approval", status == 200 and "waiting for approval" in page, f"{status}")
+    hold = re.search(r'name="id" value="(\d+)"', rows[0]) if rows else None
+    if hold is None:
+        return
+    status, _, _ = request(st, "POST", "/bans/holds", {"csrf": csrf(text), "id": hold.group(1), "action": "approve"})
+    _, _, text = request(st, "GET", "/bans")
+    check("approving the held sign-in clears it from the Bans page",
+          status == 303 and "Sign-in approved" in text and not held_rows(text, account, address), f"{status} {alerts(text)}")
+
+
+def step_files_held(name, address):
+    """A file browser sign-in through the proxy from `address`, a place the
+    account's profile lacks: held with the right password and code, while a
+    wrong password from there still fails as one; once approved, it goes
+    through."""
+    via = {"X-Forwarded-For": address}
+    _, status, page = files_sign_in(name, via)
+    check("a file browser sign-in from a new place is held, with the right password and code",
+          status == 401 and "held until an admin approves it" in page, f"{status}")
+    wrong = {"cookies": {}}
+    _, _, page = request(wrong, "GET", "/login", headers=via, host=FILES_HOST)
+    form = {"login_token": hidden(page, "login_token"), "name": name, "password": "not-the-password", "code": ""}
+    status, _, page = request(wrong, "POST", "/login", form, headers=via, host=FILES_HOST)
+    check("a wrong file browser password from there is refused as one", status == 401 and "Wrong name or password" in page,
+          f"{status}")
+    step_held(name, address)
+    _, status, _ = files_sign_in(name, via)
+    check("once approved, the file browser sign-in from there goes through", status == 303, f"{status}")
+
+
+def step_locked(account):
+    """A password spray against `account` shows as a lockdown on the Bans
+    page and the Status page."""
+    st = load("admin")
+    # The collector reads the failures within a second or two.
+    for _ in range(20):
+        status, _, text = request(st, "GET", "/bans")
+        if locked_rows(text, account):
+            break
+        time.sleep(0.5)
+    check(f"a password spray against {account} locks it down", status == 200 and len(locked_rows(text, account)) == 1,
+          f"{status} {alerts(text)}")
+    status, _, page = request(st, "GET", "/")
+    check("the Status page says an account is locked down", status == 200 and "locked down" in page, f"{status}")
+
+
+def step_lift(account):
+    st = load("admin")
+    _, _, text = request(st, "GET", "/bans")
+    status, _, _ = request(st, "POST", "/bans/lockdowns/lift", {"csrf": csrf(text), "account": account})
+    _, _, text = request(st, "GET", "/bans")
+    check(f"lifting the lockdown of {account} clears it from the Bans page",
+          status == 303 and "Lockdown lifted" in text and not locked_rows(text, account), f"{status} {alerts(text)}")
+
+
 STEPS = {
     "fresh": step_fresh,
     "setup": step_setup,
@@ -685,6 +770,10 @@ STEPS = {
     "delete-account": step_delete_account,
     "logout": step_logout,
     "lockout": step_lockout,
+    "held": step_held,
+    "files-held": step_files_held,
+    "locked": step_locked,
+    "lift": step_lift,
 }
 
 STEPS[STEP](*ARGS)

@@ -13,7 +13,7 @@ use sftp_webui::{geo, spec};
 use crate::system::{self, Backup, Failure, Outcome, TextFile};
 
 /// The settings settings.conf may hold, with the value each has when unset.
-pub const EDITABLE: [(&str, &str); 9] = [
+pub const EDITABLE: [(&str, &str); 15] = [
     ("SFTP_PORT", "22"),
     ("SFTP_LOG_TRANSFERS", "false"),
     ("SFTP_UMASK", "022"),
@@ -23,6 +23,12 @@ pub const EDITABLE: [(&str, &str); 9] = [
     ("FILES_SHARE_DAYS", "7"),
     ("FILES_SHARE_MAX_DAYS", "30"),
     ("FILES_SHARE_PASSWORD", "false"),
+    ("SIGNIN_LEARN_SIGNINS", "5"),
+    ("SIGNIN_LEARN_DAYS", "7"),
+    ("SIGNIN_TRAVEL_KMH", "750"),
+    ("SIGNIN_SPRAY_ADDRESSES", "3"),
+    ("SIGNIN_SPRAY_MINUTES", "60"),
+    ("SIGNIN_LOCKDOWN_HOURS", "24"),
 ];
 
 /// The country rules' settings, which settings.conf may hold too; the Bans
@@ -174,6 +180,10 @@ fn validate(key: &str, value: &str) -> Result<String, Failure> {
         "SFTP_AUTH_LOG_MAX_BYTES" => !value.is_empty() && value.len() <= 15 && value.bytes().all(|b| b.is_ascii_digit()),
         "FILES_SHARE" | "FILES_SHARE_PASSWORD" => BOOLEANS.contains(&value.to_lowercase().as_str()),
         "FILES_SHARE_DAYS" | "FILES_SHARE_MAX_DAYS" => {
+            (1..=9).contains(&value.len()) && !value.starts_with('0') && value.bytes().all(|b| b.is_ascii_digit())
+        }
+        "SIGNIN_LEARN_SIGNINS" | "SIGNIN_LEARN_DAYS" | "SIGNIN_TRAVEL_KMH" | "SIGNIN_SPRAY_ADDRESSES"
+        | "SIGNIN_SPRAY_MINUTES" | "SIGNIN_LOCKDOWN_HOURS" => {
             (1..=9).contains(&value.len()) && !value.starts_with('0') && value.bytes().all(|b| b.is_ascii_digit())
         }
         "SFTP_COUNTRY_RULE" => matches!(value, "off" | "block" | "allow"),

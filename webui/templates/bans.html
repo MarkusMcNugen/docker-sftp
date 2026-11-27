@@ -2,6 +2,49 @@
 {% import "macros.html" as m %}
 {% block actions %}<form method="get" action="/bans" class="segmented text" role="group" aria-label="Time range for the chart">{% if show_history %}<input type="hidden" name="show" value="history">{% endif %}{% for r in ranges %}<button type="submit" name="range" value="{{ r.value }}" aria-pressed="{% if r.on %}true{% else %}false{% endif %}">{{ r.label }}</button>{% endfor %}</form>{% endblock %}
 {% block content %}
+{% if let Some(e) = signins_error %}<div class="alert warn">{{ crate::assets::icon("warning-circle-fill")|safe }}<div class="alert-body"><span class="alert-title">Held sign-ins and locked accounts are unavailable</span><span class="alert-text">{{ e }}</span></div></div>{% endif %}
+{% if !holds.is_empty() %}
+<section class="card">
+  <header class="card-head"><h2 class="card-title">{{ crate::assets::icon("hourglass-medium")|safe }}<span>Held sign-ins</span></h2><span class="card-actions">{% call m::help("A sign-in from a place its account has not used, or too far from its last sign-in to have traveled there in time, waits here. Approving adds the place to the account, so its next sign-in from there goes through") %}{% endcall %}</span></header>
+  <div class="table-wrap"><table class="table stack">
+    <thead><tr><th>Account</th><th>Address</th><th>Place</th><th class="opt-sm">Reason</th><th>Held</th><th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
+    <tbody>
+    {% for h in holds %}
+      <tr>
+        <td class="lead"><a href="/accounts/{{ h.account }}"><code class="name">{{ h.account }}</code></a></td>
+        <td data-label="Address"><code>{{ h.address }}</code></td>
+        <td data-label="Place">{% if h.country.is_empty() %}<span class="muted">{{ h.place }}</span>{% else %}<span class="meta"><img class="flag" src="{{ crate::assets::flag(h.country) }}" alt="" data-cc="{{ h.country }}" data-tip="{{ h.country }}">{{ h.country }}</span>{% endif %}</td>
+        <td class="opt-sm" data-label="Reason">{{ h.reason }}</td>
+        <td data-label="Held"><time datetime="{{ h.when_iso }}" data-tip-prefix="Held ">{{ h.when }}</time></td>
+        <td class="actions">{% if l.full %}<span class="row-actions">
+          <form method="post" action="/bans/holds" hx-confirm="Approve this sign-in? {{ h.account }} can then sign in from {{ h.place }}."><input type="hidden" name="csrf" value="{{ l.csrf }}"><input type="hidden" name="id" value="{{ h.id }}"><input type="hidden" name="action" value="approve"><button type="submit" class="btn btn-ghost btn-icon btn-sm" aria-label="Approve the sign-in of {{ h.account }} from {{ h.address }}" data-tip="Approve">{{ crate::assets::icon("check")|safe }}</button></form>
+          <form method="post" action="/bans/holds"><input type="hidden" name="csrf" value="{{ l.csrf }}"><input type="hidden" name="id" value="{{ h.id }}"><input type="hidden" name="action" value="reject"><button type="submit" class="btn btn-ghost btn-icon btn-sm" aria-label="Reject the sign-in of {{ h.account }} from {{ h.address }}" data-tip="Reject">{{ crate::assets::icon("x")|safe }}</button></form>
+          <form method="post" action="/bans/holds" hx-confirm="Reject this sign-in and ban {{ h.address }} on every port?"><input type="hidden" name="csrf" value="{{ l.csrf }}"><input type="hidden" name="id" value="{{ h.id }}"><input type="hidden" name="action" value="ban"><button type="submit" class="btn btn-ghost btn-icon btn-sm" aria-label="Reject the sign-in of {{ h.account }} and ban {{ h.address }}" data-tip="Reject and ban the address">{{ crate::assets::icon("prohibit")|safe }}</button></form>
+        </span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endif %}
+{% if !lockdowns.is_empty() %}
+<section class="card">
+  <header class="card-head"><h2 class="card-title">{{ crate::assets::icon("lock-simple")|safe }}<span>Locked accounts</span></h2><span class="card-actions">{% call m::help("Sign-ins failed from several addresses in a short time, the pattern of a password spray. Until no sign-in has failed for the time Settings sets, only networks an account signed in from before can sign in to it") %}{% endcall %}</span></header>
+  <div class="table-wrap"><table class="table stack">
+    <thead><tr><th>Account</th><th>Locked</th><th>Last failed sign-in</th><th class="actions"><span class="sr-only">Actions</span></th></tr></thead>
+    <tbody>
+    {% for k in lockdowns %}
+      <tr>
+        <td class="lead"><a href="/accounts/{{ k.account }}"><code class="name">{{ k.account }}</code></a></td>
+        <td data-label="Locked"><time datetime="{{ k.since_iso }}" data-tip-prefix="Locked ">{{ k.since }}</time></td>
+        <td data-label="Last failed sign-in"><time datetime="{{ k.last_iso }}" data-tip-prefix="Failed ">{{ k.last }}</time></td>
+        <td class="actions">{% if l.full %}<form method="post" action="/bans/lockdowns/lift" hx-confirm="Lift the lockdown of {{ k.account }}? Failed sign-ins before now stop counting toward one."><input type="hidden" name="csrf" value="{{ l.csrf }}"><input type="hidden" name="account" value="{{ k.account }}"><button type="submit" class="btn btn-ghost btn-icon btn-sm" aria-label="Lift the lockdown of {{ k.account }}" data-tip="Lift the lockdown">{{ crate::assets::icon("lock-simple-open")|safe }}</button></form>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endif %}
 {% if !enabled %}
 <div class="alert warn">{{ crate::assets::icon("shield-warning")|safe }}<div class="alert-body"><span class="alert-title">fail2ban is not running</span><span class="alert-text">No address is banned. FAIL2BAN_ENABLED is false, or fail2ban has no firewall access.</span></div></div>
 {% else %}

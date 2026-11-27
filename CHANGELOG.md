@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.3.0
+
+### Sign-in check
+
+- With the admin web UI on, the sign-in check learns where each account signs in from. Once it has enough history, it holds a sign-in from a country the account has not used, or from one too far from its last sign-in to have traveled there in time, until an admin approves it on the Bans page. It checks SFTP sign-ins, rsync among them, through PAM, and file browser sign-ins; admins' sign-ins are not checked.
+- Failed sign-ins to one account from several addresses in a short time, as in a password spray, lock the account to the networks it signed in from before, until no sign-in to it has failed for a day or an admin lifts the lockdown.
+- A held or refused sign-in tells the client why and never counts as a failed one, so fail2ban does not ban someone waiting for approval. The Activity log lists held and refused sign-ins, and the Status page says how many wait.
+- Six settings set the thresholds, on the Settings page or as `SIGNIN_` variables.
+- sshd runs with PAM. A custom `/config/sshd/sshd_config` leaves SFTP sign-ins unchecked, and the log says so at start.
+
+### Docs
+
+- A how-to for the sign-in check, and the Unraid guide covers the file browser, which the Unraid template now turns on.
+- The docs screenshots are taken in light and dark by `tools/docs-screenshots`.
+
 ## 2.2.1
 
 - The Status page, the accounts list and every account page opened with an error whenever an SFTP client was connected. The open sessions now take their address from the login sshd logged, so the pages no longer need to read sshd's sockets, which a container without `CAP_SYS_PTRACE` cannot do.

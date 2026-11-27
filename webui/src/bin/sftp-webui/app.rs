@@ -546,6 +546,8 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/bans", get(pages::bans_page))
         .route("/bans/ban", post(pages::ban))
         .route("/bans/unban", post(pages::unban))
+        .route("/bans/holds", post(pages::hold_decide))
+        .route("/bans/lockdowns/lift", post(pages::lockdown_lift))
         .route("/bans/lift", post(pages::lift))
         .route("/bans/rules", post(pages::ban_rules))
         .route("/bans/countries", post(pages::country_rules))

@@ -26,6 +26,15 @@ pub fn log(msg: &str) {
     println!("{} sftp-helper: {msg}", timefmt::iso(timefmt::now()));
 }
 
+/// Writes `msg` to the auth log through syslog, as a warning or as
+/// information. Never to stdout, which pam_exec shows the sftp client.
+pub fn syslog(warning: bool, msg: &str) -> std::io::Result<()> {
+    let priority = if warning { 36 } else { 38 };
+    let line = format!("<{priority}>sftp-helper[{}]: {msg}", std::process::id());
+    std::os::unix::net::UnixDatagram::unbound()?.send_to(line.as_bytes(), "/dev/log")?;
+    Ok(())
+}
+
 /// The result of a request: data for a read, and what apply said.
 #[derive(Default)]
 pub struct Outcome {

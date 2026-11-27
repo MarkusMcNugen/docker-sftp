@@ -14,6 +14,8 @@ mod logs;
 mod runtime;
 mod settings;
 mod shares;
+mod signin_check;
+mod signins;
 mod system;
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -34,6 +36,13 @@ const MAX_ACTIVE: usize = 256;
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // `signin-check`, for pam_exec in sshd's account stage, with the account
+    // in PAM_USER and the client's address in PAM_RHOST: exits 0 to let the
+    // sign-in go ahead, and 1 when it is held, the account is locked down, or
+    // the check cannot decide.
+    if args.first().map(String::as_str) == Some("signin-check") {
+        return signin_check::from_pam();
+    }
     if args.first().map(String::as_str) == Some("country-rules") {
         return match country_rules(&args[1..]) {
             Ok(Load::Done) => ExitCode::SUCCESS,
@@ -251,6 +260,15 @@ fn describe(request: &Request) -> (String, String) {
         Request::Ban { address, .. } => ("address banned".into(), address.clone()),
         Request::Unban { jail, address, .. } => ("address unbanned".into(), format!("{address} ({jail})")),
         Request::Fail2banPut { .. } => ("ban rules changed".into(), "fail2ban".into()),
+        Request::HoldDecide { id, approve, ban, .. } => {
+            let action = match (*approve, *ban) {
+                (true, true | false) => "held sign-in approved",
+                (false, true) => "held sign-in rejected and its address banned",
+                (false, false) => "held sign-in rejected",
+            };
+            (action.into(), format!("hold {id}"))
+        }
+        Request::LockdownLift { account, .. } => ("lockdown lifted".into(), account.clone()),
         Request::Audit { action, target, .. } => (action.clone(), target.clone()),
         Request::GroupPut { create, group, .. } => {
             let action = if *create { "group created" } else { "group changed" };
@@ -274,6 +292,7 @@ fn describe(request: &Request) -> (String, String) {
         | Request::People { .. }
         | Request::NamesTried { .. }
         | Request::LoginsByCountry { .. }
+        | Request::Signins
         | Request::FilesLogins => (String::new(), String::new()),
     }
 }
@@ -286,6 +305,7 @@ fn dispatch(request: Request, lock: &Mutex<()>) -> Reply {
         Request::Accounts => accounts::list().map_err(Failure::from).and_then(Outcome::data),
         Request::SettingsGet => settings::get().map_err(Failure::from).and_then(Outcome::data),
         Request::Bans => settings::bans().map_err(Failure::from).and_then(Outcome::data),
+        Request::Signins => signins::list().map_err(Failure::from).and_then(Outcome::data),
         Request::Groups => groups::list().map_err(Failure::from).and_then(Outcome::data),
         Request::HistorySeries { from, to, size } => {
             history::series(from, to, size).map_err(Failure::from).and_then(Outcome::data)
@@ -329,6 +349,8 @@ fn dispatch(request: Request, lock: &Mutex<()>) -> Reply {
                 Request::Ban { address, .. } => settings::ban(&address),
                 Request::Unban { jail, address, .. } => settings::unban(&jail, &address),
                 Request::Fail2banPut { rules, .. } => settings::put_rules(&rules),
+                Request::HoldDecide { id, approve, ban, .. } => signins::decide(id, approve, ban),
+                Request::LockdownLift { account, .. } => signins::lift(&account),
                 Request::GroupPut { create, group, .. } => groups::put(create, group),
                 Request::GroupDelete { name, .. } => groups::delete(&name),
                 Request::MaxmindPut { account_id, license_key, .. } => geoip::put(&account_id, &license_key.0),
@@ -349,6 +371,7 @@ fn dispatch(request: Request, lock: &Mutex<()>) -> Reply {
                 | Request::People { .. }
                 | Request::NamesTried { .. }
                 | Request::LoginsByCountry { .. }
+                | Request::Signins
                 | Request::FilesLogins => Err(Failure::new("not a change")),
             };
             drop(guard);

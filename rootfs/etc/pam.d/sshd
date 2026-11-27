@@ -1,0 +1,8 @@
+# PAM for sshd. pam_unix checks passwords and the account, its expiry
+# included, which sshd leaves to PAM when UsePAM is on. Sessions need
+# nothing from PAM, and passwords are changed only in /config. When the web
+# UI is on, the entrypoint adds the sign-in check to the account stage.
+auth     required pam_unix.so
+account  required pam_unix.so
+session  required pam_permit.so
+password required pam_deny.so

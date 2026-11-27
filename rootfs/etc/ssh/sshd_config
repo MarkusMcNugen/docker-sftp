@@ -32,7 +32,9 @@ PermitEmptyPasswords no
 KbdInteractiveAuthentication no
 HostbasedAuthentication no
 IgnoreRhosts yes
-UsePAM no
+# PAM checks passwords and accounts with pam_unix, and runs the sign-in
+# check after a password or key is accepted when the web UI is on.
+UsePAM yes
 StrictModes yes
 # Keys live outside every chroot, root-owned, so an SFTP user cannot
 # grant themselves access by uploading an authorized_keys file.

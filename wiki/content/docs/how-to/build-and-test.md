@@ -52,6 +52,10 @@ cd webui && cargo clippy --locked --all-targets -- -D warnings && cargo test --l
 
 The web UI is a Rust crate in `webui/`; it builds on Linux with Rust 1.100, and its tests run with `cargo test`.
 
+## Screenshots
+
+The screenshots in these docs and the README come from a demo server with made-up accounts, taken by the scripts in `tools/docs-screenshots/`. Its README says how to take them again for a release.
+
 ## Releases
 
 `.github/workflows/release.yml` runs on a `v*` tag, every week, and by hand. It lints, runs the suite on a native x86 runner and a native arm64 runner, scans the image with Trivy, and publishes `linux/amd64` and `linux/arm64` images to Docker Hub and GHCR. The weekly run rebuilds the newest release tag, so Debian security updates reach the published image.

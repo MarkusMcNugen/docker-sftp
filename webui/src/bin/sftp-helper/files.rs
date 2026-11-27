@@ -13,8 +13,9 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sftp_webui::net::{self, Network};
 use sftp_webui::proto::{FilesInvite, FilesLogin, FilesRequest, Reply, SignedIn};
-use sftp_webui::{auth, spec, sshkey, timefmt};
+use sftp_webui::{auth, signin, spec, sshkey, timefmt};
 
+use crate::signin_check::{self, Answer};
 use crate::system::{self, Failure, Outcome};
 
 const STORE: &str = "/config/files/logins.json";
@@ -225,7 +226,9 @@ fn from_allowed(account: &str, options: &spec::Options, ip: IpAddr) -> Result<()
 
 /// Checks a sign-in from `address`. The same work is done whether or not
 /// the name exists, and every refusal of the name or password reads the
-/// same, so it tells nothing about the account.
+/// same, so it tells nothing about the account. Once the password and code
+/// are right, the check sshd runs for sftp sign-ins can hold the sign-in
+/// for an admin's approval, or refuse it while the account is locked down.
 fn sign_in(account: &str, password: &str, code: &str, address: &str) -> Result<SignedIn, Failure> {
     let s = state()?;
     let ip = address_of(address)?;
@@ -258,6 +261,19 @@ fn sign_in(account: &str, password: &str, code: &str, address: &str) -> Result<S
             return Err(Failure::new("wrong code"));
         };
         login.last_step = step;
+    }
+    let refusal = match signin_check::check(account, &ip.to_string())? {
+        Answer::Allow => None,
+        Answer::Held(reason) => {
+            Some((format!("held the sign-in of {account} from {ip} for an admin's approval: {reason}"), signin::HELD))
+        }
+        Answer::Refused => Some((format!("refused the sign-in of {account} from {ip}: the account is locked down"), signin::LOCKED)),
+    };
+    if let Some((what, answer)) = refusal {
+        // Saved so the code stays used up and cannot be tried again.
+        save(&store)?;
+        system::log(&format!("files: {what}"));
+        return Err(Failure::new(answer));
     }
     let now = timefmt::now();
     login.last_sign_in = Some(now);

@@ -577,7 +577,12 @@ async fn login(State(b): Shared, Extension(client): Extension<Client>, Form(f): 
         Err(e) => return failure(&e),
     };
     if !reply.ok {
-        if reply.error != NEED_CODE {
+        let error = reply.error.as_str();
+        if error == sftp_webui::signin::HELD {
+            record_sign_in(sftp_webui::events::Kind::LoginHeld, f.name.trim(), &ip.to_string());
+        } else if error == sftp_webui::signin::LOCKED {
+            record_sign_in(sftp_webui::events::Kind::LoginRefused, f.name.trim(), &ip.to_string());
+        } else if error != NEED_CODE {
             lock(&b.throttle).failure(ip, Instant::now());
             crate::pages::syslog(true, &format!("failed login from {ip} (file browser)"));
             record_sign_in(sftp_webui::events::Kind::LoginFailed, f.name.trim(), &ip.to_string());
