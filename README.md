@@ -122,6 +122,7 @@ Bob has no password and logs in with the key in `/config/userkeys/bob.pub`. Caro
 | `SFTP_AUTH_LOG_MAX_BYTES` | `10485760` | Size in B at which the internal auth log rotates; `0` for no cap |
 | `SFTP_RSYNC_USERS` | | Accounts allowed rsync over SSH, or `*` for all |
 | `FAIL2BAN_ENABLED` | `true` | `false` runs without fail2ban |
+| `NO_COLOR` | empty | Set to anything for a log without colored labels |
 | `TZ` | `UTC` | Time zone for log timestamps |
 | `WEBUI_ENABLED` | `false` | Runs the admin web UI, on `WEBUI_PORT` (`8443`) |
 | `WEBUI_FILES_ENABLED` | `false` | Runs the file browser, on `WEBUI_FILES_PORT` (`8444`) |

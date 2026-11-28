@@ -132,18 +132,75 @@ declare -A PROC_NAME REAPED
 STOPPING=false
 RELOAD_PENDING=false
 
-log() {
-    local now line
+# The console's labels are colored unless NO_COLOR is set (no-color.org);
+# the message text and the copy in LOG_COPY stay plain.
+if [[ -z ${NO_COLOR:-} ]]; then
+    COLOR_TAG=$'\e[36m' COLOR_WARNING=$'\e[1;33m' COLOR_FATAL=$'\e[1;31m' COLOR_OFF=$'\e[0m'
+else
+    COLOR_TAG='' COLOR_WARNING='' COLOR_FATAL='' COLOR_OFF=''
+fi
+
+# log_line LEVEL COLOR TEXT...: one line of the log, LEVEL empty for an
+# ordinary one.
+log_line() {
+    local level=$1 color=$2 now
+    shift 2
     printf -v now '%(%Y-%m-%dT%H:%M:%S%z)T' -1
-    printf -v line '%s entrypoint: %s' "$now" "$*"
-    printf '%s\n' "$line"
-    if [[ -n $LOG_COPY ]]; then printf '%s\n' "$line" >>"$LOG_COPY"; fi
+    printf '%s %sentrypoint:%s %s%s\n' "$now" "$COLOR_TAG" "$COLOR_OFF" "${level:+$color$level:$COLOR_OFF }" "$*"
+    if [[ -n $LOG_COPY ]]; then printf '%s entrypoint: %s%s\n' "$now" "${level:+$level: }" "$*" >>"$LOG_COPY"; fi
 }
+log() { log_line "" "" "$*"; }
 info() { log "$*"; }
-warn() { log "warning: $*" >&2; }
+warn() { log_line warning "$COLOR_WARNING" "$*" >&2; }
 die() {
-    log "fatal: $*" >&2
+    log_line fatal "$COLOR_FATAL" "$*" >&2
     exit 1
+}
+
+# The boot banner: the logo in the colors the console supports, the image's
+# name and version, its maintainer, and a newer image on Docker Hub if any.
+# IMAGE_BANNER picks the colors (auto, truecolor, 256, 16, plain) or off.
+banner() {
+    local depth=${IMAGE_BANNER:-auto} version
+    if [[ $depth == auto ]]; then
+        if [[ -n ${NO_COLOR:-} ]]; then
+            depth=plain
+        else
+            case ${COLORTERM:-}:${TERM:-} in
+                truecolor:* | 24bit:*) depth=truecolor ;;
+                *:*256color*) depth=256 ;;
+                *:xterm* | *:screen* | *:linux | *:vt100 | *:ansi) depth=16 ;;
+                *) depth=256 ;;
+            esac
+        fi
+    fi
+    case $depth in
+        off) return 0 ;;
+        truecolor | 256 | 16 | plain) ;;
+        *)
+            warn "IMAGE_BANNER must be auto, truecolor, 256, 16, plain or off, not $depth"
+            depth=plain
+            ;;
+    esac
+    version=$(</usr/local/lib/sftp/version)
+    cat "/usr/local/share/sftp/banner-$depth.txt"
+    printf '%s\n' "SFTP $version" "by MarkusMcNugen, author and maintainer" ""
+    newer_image "$version"
+}
+
+# A newer image of the same major on Docker Hub, asked for with a 10 s wait;
+# no answer says nothing. IMAGE_UPDATE_CHECK=off skips the question.
+newer_image() {
+    local version=$1 major tags newest
+    case ${IMAGE_UPDATE_CHECK:-on} in off | false | no | 0) return 0 ;; esac
+    [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 0
+    major=${version%%.*}
+    tags=$(curl -q --fail --silent --proto =https --max-time 10 \
+        "https://hub.docker.com/v2/repositories/markusmcnugen/sftp/tags?page_size=100") || return 0
+    newest=$(grep -oE "\"name\":\"$major\\.[0-9]+\\.[0-9]+\"" <<<"$tags" | cut -d'"' -f4 | sort -V | tail -n 1) || return 0
+    if [[ -n $newest && $newest != "$version" && $(printf '%s\n%s\n' "$version" "$newest" | sort -V | tail -n 1) == "$newest" ]]; then
+        info "a newer image, $newest, is out: docker pull markusmcnugen/sftp:$major, then make the container again"
+    fi
 }
 # Subshells (command substitutions, background jobs) report through their
 # caller, so only the main shell names the failing line.
@@ -1973,6 +2030,7 @@ main() {
         exec "$@"
     fi
 
+    banner
     capture_environment
     load_settings_file
     apply_defaults
@@ -1983,7 +2041,7 @@ main() {
         write_users_template
         # With the web UI on, its first admin makes the accounts.
         if ! is_true "$WEBUI_ENABLED"; then
-            log "fatal: no users configured. Add them to $USERS_CONF, SFTP_USERS or the command line." >&2
+            log_line fatal "$COLOR_FATAL" "no users configured. Add them to $USERS_CONF, SFTP_USERS or the command line." >&2
             exit 3
         fi
         warn "no account yet, so every SFTP sign-in fails; add one on the web UI's Accounts page"

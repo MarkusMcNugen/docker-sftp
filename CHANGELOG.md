@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.2
+
+- The log's labels are colored on the console: `entrypoint:` cyan, `warning:` yellow, `fatal:` red; the message text, and the copy the web UI shows, stay plain. `NO_COLOR` set to anything turns the colors off.
+- Every boot opens with a banner: the SFTP logo in the colors the console supports, then the image's name and version and its maintainer, and a newer image on Docker Hub if one is out. `IMAGE_BANNER` picks the colors or turns it off, and `IMAGE_UPDATE_CHECK=off` skips the question to Docker Hub.
+
 ## 2.3.1
 
 - With the admin web UI on, the container starts with no account yet, so a fresh install, such as one from the Unraid template, comes up for its first admin to add accounts in the browser. Every SFTP sign-in fails until then, and the log and the Status page say so. Without the web UI, a server with no account still stops at start.

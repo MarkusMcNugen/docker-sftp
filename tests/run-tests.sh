@@ -78,6 +78,9 @@ expect() {
 
 has() { grep -qF -- "$1" <<<"$OUT"; }
 lacks() { ! grep -qF -- "$1" <<<"$OUT"; }
+# OUT without its color codes.
+# shellcheck disable=SC2001 # codes of any length, which ${OUT//...} matches only with extglob
+plain() { sed $'s/\e\\[[0-9;]*m//g' <<<"$OUT"; }
 
 cleanup() {
     local -a ids=()
@@ -185,7 +188,7 @@ in_server() { engine exec "$SERVER" "$@"; }
 
 # The server's process titles, one per line. The image has no ps.
 process_titles() {
-    in_server sh -c 'for p in /proc/[0-9]*; do tr "\0" " " <"$p/cmdline" 2>/dev/null; echo; done'
+    in_server sh -c 'for p in /proc/[0-9]*; do tr "\0" " " 2>/dev/null <"$p/cmdline"; echo; done'
 }
 
 # has_session <account>: true while the account has an open SSH session.
@@ -474,7 +477,7 @@ scenario_options() {
     capture engine logs "$SERVER"
     expect "FAIL2BAN_ENABLED=false runs and stays healthy without fail2ban" \
         eval 'has "fail2ban is disabled" && ! in_server test -e /run/fail2ban/fail2ban.sock'
-    expect "TZ sets the time zone of log timestamps" has "+0530 entrypoint:"
+    expect "TZ sets the time zone of log timestamps" eval 'plain | grep -qF "+0530 entrypoint:"'
 
     capture negotiate -o Ciphers=aes128-ctr -o MACs=hmac-sha2-256
     expect "SFTP_CRYPTO_POLICY=strict refuses plain hmac-sha2-256" has "no matching MAC"
@@ -1088,6 +1091,33 @@ scenario_reject() {
     reject "refuses an unknown country rule" "is not off, block or allow" eve:pw -e SFTP_COUNTRY_RULE=deny
     reject "refuses half a MaxMind key" "set both or neither" eve:pw -e MAXMIND_ACCOUNT_ID=123456
     reject "refuses the file browser without the admin web UI" "needs WEBUI_ENABLED=true" eve:pw -e WEBUI_FILES_ENABLED=true
+
+    # shellcheck disable=SC2034 # the checks read red inside eval
+    local red=$'\e[1;31m'
+    capture timeout 60 "$ENGINE" run --rm -e SFTP_PORT=70000 "$IMAGE" eve:pw
+    expect "a fatal line's label is red" eval '((RC != 0)) && has "${red}fatal:"'
+    capture timeout 60 "$ENGINE" run --rm -e SFTP_PORT=70000 -e NO_COLOR=1 "$IMAGE" eve:pw
+    expect "NO_COLOR takes the colors out" eval '((RC != 0)) && has "fatal: " && lacks "$red"'
+    expect "the banner names the image and its maintainer" eval 'has "SFTP dev" && has "by MarkusMcNugen, author and maintainer"'
+    capture timeout 60 "$ENGINE" run --rm -e SFTP_PORT=70000 -e IMAGE_BANNER=off "$IMAGE" eve:pw
+    expect "IMAGE_BANNER=off leaves the banner out" eval '((RC != 0)) && lacks "MarkusMcNugen"'
+
+    # A stand-in for curl answers as Docker Hub's tag listing does, so the
+    # newer-image check runs without the network.
+    local tags='{"count":5,"next":null,"previous":null,"results":[{"name":"latest"},{"name":"2"},{"name":"2.10.0"},{"name":"2.9.1"},{"name":"3"}]}'
+    mkdir -p "$WORK/hub"
+    printf '#!/bin/sh\necho %s\n' "'$tags'" >"$WORK/hub/curl"
+    chmod 755 "$WORK/hub/curl"
+    printf '2.9.1\n' >"$WORK/hub/older"
+    printf '3.0.0\n' >"$WORK/hub/major"
+    capture timeout 60 "$ENGINE" run --rm -e SFTP_PORT=70000 -v "$WORK/hub/curl:/usr/bin/curl:ro" \
+        -v "$WORK/hub/older:/usr/local/lib/sftp/version:ro" "$IMAGE" eve:pw
+    expect "the banner names a newer image of the same major" \
+        eval 'has "a newer image, 2.10.0, is out: docker pull markusmcnugen/sftp:2,"'
+    capture timeout 60 "$ENGINE" run --rm -e SFTP_PORT=70000 -v "$WORK/hub/curl:/usr/bin/curl:ro" \
+        -v "$WORK/hub/major:/usr/local/lib/sftp/version:ro" "$IMAGE" eve:pw
+    expect "a major with no tag on Docker Hub yet starts as usual" \
+        eval 'has "SFTP 3.0.0" && has "is not a port number" && lacks "a newer image"'
 
     mkdir -p "$WORK/empty"
     capture timeout 60 "$ENGINE" run --rm -v "$WORK/empty:/config" "$IMAGE"

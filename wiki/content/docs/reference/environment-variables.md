@@ -16,6 +16,9 @@ Every variable the container reads. All are optional. A value the image does not
 | `SFTP_AUTH_LOG_MAX_BYTES` | `10485760` (10 MiB) | a whole number, in B; `0` for no cap | The size at which `/var/log/auth.log` is copied to `auth.log.1` and emptied. Read every five seconds |
 | `SFTP_RSYNC_USERS` | empty | account names separated by spaces, or `*` | Accounts allowed rsync over SSH, besides those whose line ends in `:rsync`; a name that is not an account stops the container ([How To Allow rsync](../../how-to/allow-rsync/)) |
 | `FAIL2BAN_ENABLED` | `true` | as `SFTP_LOG_TRANSFERS` | `false` runs without fail2ban |
+| `IMAGE_BANNER` | `auto` | `auto`, `truecolor`, `256`, `16`, `plain`, `off` | The boot banner: the logo, the image's name and version and its maintainer; `auto` picks the colors from `COLORTERM` and `TERM`, 256 colors when they say nothing |
+| `IMAGE_UPDATE_CHECK` | `on` | `on`, `off` | At boot, asks Docker Hub, waiting up to 10 s, whether a newer image of the same major is out, and says so; `off` skips it |
+| `NO_COLOR` | empty | anything | Set to anything, the log's labels carry no colors ([no-color.org](https://no-color.org)); the copy the web UI shows is always plain |
 | `TZ` | `UTC` | a zone name such as `Europe/Berlin` | The time zone of log timestamps |
 | `WEBUI_ENABLED` | `false` | as `SFTP_LOG_TRANSFERS` | Runs the admin web UI ([How To Use The Admin Web UI](../../how-to/use-the-web-ui/)) |
 | `WEBUI_PORT` | `8443` | 1024 to 65535, not an sshd port | The web UI's port inside the container |
